@@ -66,6 +66,8 @@ export default function Page() {
   const [pinnedConversationIds, setPinnedConversationIds] = useState<string[]>([])
   const [sidebarVisible, setSidebarVisible] = useState(false)
   const [hasBrandLogo, setHasBrandLogo] = useState(true)
+  const [pendingDeleteConversation, setPendingDeleteConversation] = useState<ConversationSummary | null>(null)
+  const [isDeletingConversation, setIsDeletingConversation] = useState(false)
   const sidebarSearchRef = useRef<HTMLInputElement | null>(null)
 
   const [booting, setBooting] = useState(true)
@@ -184,6 +186,17 @@ export default function Page() {
     const validIds = new Set(conversations.map((item) => item.id))
     setPinnedConversationIds((prev) => prev.filter((id) => validIds.has(id)))
   }, [conversations])
+
+  useEffect(() => {
+    if (!pendingDeleteConversation) return
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && !isDeletingConversation) {
+        setPendingDeleteConversation(null)
+      }
+    }
+    window.addEventListener("keydown", handleEscape)
+    return () => window.removeEventListener("keydown", handleEscape)
+  }, [pendingDeleteConversation, isDeletingConversation])
 
   async function saveCloudMessage(message: ChatMessage) {
     if (!conversationId || !userId) {
@@ -306,10 +319,14 @@ export default function Page() {
     }
   }
 
-  async function handleDeleteConversation(conversation: ConversationSummary) {
-    if (!userId) return
-    if (!window.confirm(`ยืนยันการลบ \"${conversation.title}\"?`)) return
+  function requestDeleteConversation(conversation: ConversationSummary) {
+    setPendingDeleteConversation(conversation)
+  }
 
+  async function handleDeleteConversation() {
+    if (!userId || !pendingDeleteConversation || isDeletingConversation) return
+    const conversation = pendingDeleteConversation
+    setIsDeletingConversation(true)
     try {
       await deleteConversation(conversation.id)
       setPinnedConversationIds((prev) => prev.filter((id) => id !== conversation.id))
@@ -324,10 +341,13 @@ export default function Page() {
         await openConversation(next.id)
       }
 
+      setPendingDeleteConversation(null)
       showToast("success", "ลบการสนทนาสำเร็จ")
     } catch (deleteError) {
       const message = deleteError instanceof Error ? deleteError.message : "ไม่สามารถลบการสนทนาได้"
       showToast("error", message)
+    } finally {
+      setIsDeletingConversation(false)
     }
   }
 
@@ -504,7 +524,7 @@ export default function Page() {
                         <button type="button" className="conversation-action" onClick={() => startRename(item)} title="เปลี่ยนชื่อ">
                           <Edit2 size={14} />
                         </button>
-                        <button type="button" className="conversation-delete conversation-delete-wide" onClick={() => handleDeleteConversation(item)} title="ลบการสนทนา">
+                        <button type="button" className="conversation-delete conversation-delete-wide" onClick={() => requestDeleteConversation(item)} title="ลบการสนทนา">
                           <Trash2 size={14} />
                           <span className="sr-only">ลบ</span>
                         </button>
@@ -582,10 +602,10 @@ export default function Page() {
           {!userEmail ? (
             <section className="auth-strip auth-strip-links">
               <p className="auth-cta-text">ต้องการบันทึกประวัติและซิงค์ข้ามอุปกรณ์?</p>
-              <Link href="/login" className="auth-link-button">
+              <Link href="/login?next=%2F" className="auth-link-button">
                 เข้าสู่ระบบ
               </Link>
-              <Link href="/signup" className="ghost-button">
+              <Link href="/signup?next=%2F" className="ghost-button">
                 สมัครสมาชิก
               </Link>
             </section>
@@ -669,6 +689,43 @@ export default function Page() {
           <span className="dock-avatar">{userEmail ? userEmail.slice(0, 1).toUpperCase() : "UP"}</span>
         </div>
       </aside>
+
+      {pendingDeleteConversation ? (
+        <div
+          className="admin-modal-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="ยืนยันการลบการสนทนา"
+          onClick={() => {
+            if (!isDeletingConversation) setPendingDeleteConversation(null)
+          }}
+        >
+          <div className="admin-modal" onClick={(event) => event.stopPropagation()}>
+            <h3>ยืนยันการลบการสนทนา</h3>
+            <p>
+              ต้องการลบ &quot;<strong>{pendingDeleteConversation.title}</strong>&quot; ใช่หรือไม่?
+            </p>
+            <div className="admin-modal-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => setPendingDeleteConversation(null)}
+                disabled={isDeletingConversation}
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                className="auth-link-button"
+                onClick={() => void handleDeleteConversation()}
+                disabled={isDeletingConversation}
+              >
+                {isDeletingConversation ? "กำลังลบ..." : "ยืนยันการลบ"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </ChatShell>
   )
 }

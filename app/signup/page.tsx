@@ -1,10 +1,10 @@
 "use client"
 
-import { FormEvent, useState } from "react"
+import { FormEvent, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Eye, EyeOff, UserPlus } from "lucide-react"
-import { signUpWithPassword } from "@/app/lib/chat-memory"
+import { getCurrentUser, signUpWithPassword } from "@/app/lib/chat-memory"
 import { isValidEmail, toThaiAuthError, validateStrongPassword } from "@/app/lib/auth-form"
 
 export default function SignupPage() {
@@ -12,10 +12,53 @@ export default function SignupPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [nextPath, setNextPath] = useState("/")
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const [checkingSession, setCheckingSession] = useState(true)
+  const [needEmailVerification, setNeedEmailVerification] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+
+  const loginLink = useMemo(() => {
+    const params = new URLSearchParams()
+    params.set("email", email.trim())
+    if (nextPath && nextPath !== "/") params.set("next", nextPath)
+    return `/login?${params.toString()}`
+  }, [email, nextPath])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const params = new URLSearchParams(window.location.search)
+    const next = params.get("next")?.trim()
+    if (next && next.startsWith("/")) {
+      setNextPath(next)
+    }
+    const fromEmail = params.get("email")
+    if (fromEmail?.trim()) {
+      setEmail(fromEmail.trim())
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    getCurrentUser()
+      .then((user) => {
+        if (!mounted) return
+        if (user) {
+          router.replace(nextPath)
+          return
+        }
+        setCheckingSession(false)
+      })
+      .catch(() => {
+        if (!mounted) return
+        setCheckingSession(false)
+      })
+    return () => {
+      mounted = false
+    }
+  }, [nextPath, router])
 
   const emailError = email.length > 0 && !isValidEmail(email) ? "รูปแบบอีเมลไม่ถูกต้อง" : null
   const passwordRules = validateStrongPassword(password)
@@ -34,6 +77,7 @@ export default function SignupPage() {
     setLoading(true)
     setError(null)
     setMessage(null)
+    setNeedEmailVerification(false)
 
     try {
       const authResult = await signUpWithPassword(email.trim(), password)
@@ -42,13 +86,14 @@ export default function SignupPage() {
         throw new Error(authResult.error.message)
       }
 
-      if (!authResult.data.user) {
-        setMessage("สมัครสมาชิกสำเร็จ ระบบส่งอีเมลยืนยันแล้ว กรุณาตรวจสอบกล่องจดหมายหรือสแปม")
+      if (!authResult.data.session) {
+        setNeedEmailVerification(true)
+        setMessage("สมัครสมาชิกสำเร็จแล้ว กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ")
         return
       }
 
-      setMessage("สมัครสมาชิกสำเร็จ กำลังพากลับหน้าแชท...")
-      router.push("/")
+      setMessage("สมัครสมาชิกสำเร็จ กำลังพากลับ...")
+      router.replace(nextPath)
       router.refresh()
     } catch (submitError) {
       const nextError = submitError instanceof Error ? submitError.message : "ไม่สามารถสมัครสมาชิกได้"
@@ -61,6 +106,7 @@ export default function SignupPage() {
   return (
     <main className="auth-page">
       <section className="auth-card" aria-label="Signup form">
+        {checkingSession ? <p className="auth-subtitle">กำลังตรวจสอบสถานะผู้ใช้...</p> : null}
         <p className="chat-kicker">มหาวิทยาลัยพะเยา</p>
         <h1>สมัครสมาชิก</h1>
         <p className="auth-subtitle">สร้างบัญชีเพื่อเก็บประวัติการสนทนาและใช้งานระบบได้ต่อเนื่อง</p>
@@ -134,14 +180,20 @@ export default function SignupPage() {
           {error ? <p className="auth-error">{error}</p> : null}
           {message ? <p className="auth-success">{message}</p> : null}
 
-          <button className="auth-link-button" type="submit" disabled={loading}>
+          <button className="auth-link-button" type="submit" disabled={loading || checkingSession}>
             <UserPlus size={16} />
             {loading ? "กำลังสมัครสมาชิก..." : "สมัครสมาชิก"}
           </button>
         </form>
 
+        {needEmailVerification ? (
+          <p className="auth-footer">
+            ยืนยันอีเมลแล้ว? <Link href={loginLink}>ไปหน้าเข้าสู่ระบบ</Link>
+          </p>
+        ) : null}
+
         <p className="auth-footer">
-          มีบัญชีแล้ว? <Link href="/login">เข้าสู่ระบบ</Link>
+          มีบัญชีแล้ว? <Link href={loginLink}>เข้าสู่ระบบ</Link>
         </p>
         <p className="auth-footer auth-back-link">
           <Link href="/">กลับไปหน้าแชท</Link>

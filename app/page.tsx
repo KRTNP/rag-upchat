@@ -1,75 +1,133 @@
-﻿"use client"
-import { useState } from "react"
+"use client"
 
-type Message = {
-  role: "user" | "bot"
-  text: string
+import { useEffect, useState } from "react"
+import ChatComposer from "@/app/components/chat-composer"
+import ChatShell from "@/app/components/chat-shell"
+import ChatStatus from "@/app/components/chat-status"
+import MessageList from "@/app/components/message-list"
+import { loadMessagesFromStorage, saveMessagesToStorage } from "@/app/lib/chat-storage"
+import type { ChatMessage } from "@/app/lib/chat-types"
+
+const ERROR_MESSAGE = "Unable to get a response. Please try again."
+
+function makeMessage(role: ChatMessage["role"], text: string): ChatMessage {
+  return {
+    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    role,
+    text,
+    createdAt: new Date().toISOString()
+  }
 }
 
 export default function Page() {
   const [question, setQuestion] = useState("")
-  const [messages, setMessages] = useState<Message[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [lastQuestion, setLastQuestion] = useState("")
+  const [storageReady, setStorageReady] = useState(false)
 
-  async function ask() {
-    if (!question.trim()) return
+  useEffect(() => {
+    setMessages(loadMessagesFromStorage())
+    setStorageReady(true)
+  }, [])
 
-    const userMsg: Message = { role: "user", text: question }
-    setMessages(prev => [...prev, userMsg])
+  useEffect(() => {
+    if (!storageReady) {
+      return
+    }
 
-    const res = await fetch("/api/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ question })
-    })
+    saveMessagesToStorage(messages)
+  }, [messages, storageReady])
 
-    const data = await res.json()
+  async function ask(nextQuestion?: string) {
+    const prompt = (nextQuestion ?? question).trim()
 
-    const botMsg: Message = { role: "bot", text: data.answer }
+    if (!prompt || isLoading) {
+      return
+    }
 
-    setMessages(prev => [...prev, botMsg])
+    const fromRetry = Boolean(nextQuestion)
+    setError(null)
+    setIsLoading(true)
+    setLastQuestion(prompt)
+
+    if (!fromRetry) {
+      setMessages((prev) => [...prev, makeMessage("user", prompt)])
+    }
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ question: prompt })
+      })
+
+      if (!res.ok) {
+        throw new Error(`Request failed: ${res.status}`)
+      }
+
+      const data = (await res.json()) as { answer?: string }
+      const answer = data.answer
+
+      if (!answer) {
+        throw new Error("Missing answer in response")
+      }
+
+      setMessages((prev) => [...prev, makeMessage("bot", answer)])
+      setQuestion("")
+    } catch {
+      setError(ERROR_MESSAGE)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  function clearChat() {
+    setMessages([])
     setQuestion("")
+    setError(null)
+    setLastQuestion("")
   }
 
   return (
-    <div style={{ padding: 40 }}>
-      <h1>RAG Chat</h1>
+    <ChatShell>
+      <header className="chat-header">
+        <div className="chat-header-top">
+          <p className="chat-kicker">RAG UPCHAT</p>
+          <a className="admin-link" href="/admin">
+            Admin
+          </a>
+        </div>
+        <h1>Contextual AI Assistant</h1>
+        <p className="chat-subtitle">Fast answers from vector search + Gemini. Built for real conversations.</p>
+      </header>
 
-      <div style={{ marginBottom: 20 }}>
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            style={{
-              marginBottom: 10,
-              textAlign: m.role === "user" ? "right" : "left"
-            }}
+      <MessageList messages={messages} />
+
+      <div className="chat-toolbar">
+        <ChatStatus isLoading={isLoading} error={error} />
+        <div className="chat-actions">
+          {error && lastQuestion ? (
+            <button type="button" data-testid="retry-button" className="ghost-button" onClick={() => ask(lastQuestion)}>
+              Retry
+            </button>
+          ) : null}
+          <button
+            type="button"
+            data-testid="clear-chat-button"
+            className="ghost-button"
+            onClick={clearChat}
+            disabled={messages.length === 0 && !question && !error}
           >
-            <span
-              style={{
-                background: m.role === "user" ? "#4f46e5" : "#333",
-                color: "white",
-                padding: "8px 12px",
-                borderRadius: 8,
-                display: "inline-block"
-              }}
-            >
-              {m.text}
-            </span>
-          </div>
-        ))}
+            Clear chat
+          </button>
+        </div>
       </div>
 
-      <input
-        value={question}
-        onChange={(e) => setQuestion(e.target.value)}
-        placeholder="ถามคำถาม..."
-        style={{ padding: 8, width: "70%" }}
-      />
-
-      <button onClick={ask} style={{ padding: 8, marginLeft: 10 }}>
-        ถาม
-      </button>
-    </div>
+      <ChatComposer value={question} disabled={isLoading} onChange={setQuestion} onSubmit={() => ask()} />
+    </ChatShell>
   )
 }

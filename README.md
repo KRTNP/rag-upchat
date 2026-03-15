@@ -28,8 +28,13 @@ npm install
 GEMINI_API_KEY=...
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
+SUPABASE_SERVICE_ROLE_KEY=...
 CF_ACCOUNT_ID=...
 CF_API_TOKEN=...
+ADMIN_API_KEY=...
+ADMIN_USERNAME=...
+ADMIN_PASSWORD=...
+ADMIN_SESSION_SECRET=...
 ```
 
 ## 3) เตรียมฐานข้อมูล Supabase
@@ -89,6 +94,28 @@ npm run dev
 ```
 
 เปิด `http://localhost:3000`
+
+## 7) จัดการข้อมูล RAG ผ่านหน้า Admin
+
+- เปิด `http://localhost:3000/admin`
+- เข้าระบบด้วย `ADMIN_USERNAME` / `ADMIN_PASSWORD`
+- หรือใช้ `ADMIN_API_KEY` เป็น fallback ได้
+- หน้า Admin รองรับ:
+  - ค้นหา/เพิ่ม/แก้ไข/ลบ เอกสารในตาราง `documents`
+  - Re-embed รายเอกสาร หรือ Re-embed ทั้งระบบ
+  - นำเข้า CSV (`question,answer`) และสั่ง embed ทันทีได้
+  - Dashboard metrics (total/embedded/pending/latest id)
+
+> แนะนำให้ตั้ง `SUPABASE_SERVICE_ROLE_KEY` สำหรับสิทธิ์เขียนข้อมูลในระบบ Admin/API ฝั่งเซิร์ฟเวอร์
+
+## 8) รันทดสอบ
+
+```bash
+npm run test:run
+npm run lint
+npm run build
+npm run test:e2e
+```
 
 ## หมายเหตุ
 

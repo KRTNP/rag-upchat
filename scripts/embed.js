@@ -1,91 +1,85 @@
-import dotenv from "dotenv";
-import axios from "axios";
-import { createClient } from "@supabase/supabase-js";
+import dotenv from "dotenv"
+import axios from "axios"
+import { createClient } from "@supabase/supabase-js"
 
-// โหลดไฟล์ .env.local
-dotenv.config({ path: ".env.local" });
+dotenv.config({ path: ".env.local" })
 
-// ✅ เช็ค Supabase env
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
+const supabaseUrl = process.env.SUPABASE_URL
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY
 
 if (!supabaseUrl || !supabaseKey) {
-  console.error("Missing Supabase env");
-  process.exit(1);
+  console.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY/SUPABASE_ANON_KEY")
+  process.exit(1)
 }
 
-// ✅ เช็ค Cloudflare env
-const cfAccountId = process.env.CF_ACCOUNT_ID;
-const cfApiToken = process.env.CF_API_TOKEN;
+const cfAccountId = process.env.CF_ACCOUNT_ID
+const cfApiToken = process.env.CF_API_TOKEN
 
 if (!cfAccountId || !cfApiToken) {
-  console.error("Missing Cloudflare env");
-  process.exit(1);
+  console.error("Missing CF_ACCOUNT_ID or CF_API_TOKEN")
+  process.exit(1)
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(supabaseUrl, supabaseKey)
 
 async function run() {
   try {
-
-    const { data, error } = await supabase
-      .from("documents")
-      .select("*");
+    const { data, error } = await supabase.from("documents").select("id,question,answer")
 
     if (error) {
-      console.error("Supabase fetch error:", error);
-      return;
+      console.error("Supabase fetch error:", error.message)
+      process.exit(1)
     }
 
     if (!data?.length) {
-      console.log("No documents found");
-      return;
+      console.log("No documents found")
+      return
     }
 
-    for (const row of data) {
+    let success = 0
+    let failed = 0
 
-      const text = `${row.question} ${row.answer}`;
+    for (const row of data) {
+      const text = `${row.question} ${row.answer}`
 
       try {
-
         const response = await axios.post(
           `https://api.cloudflare.com/client/v4/accounts/${cfAccountId}/ai/run/@cf/baai/bge-m3`,
-          {
-            text: [text]
-          },
+          { text: [text] },
           {
             headers: {
               Authorization: `Bearer ${cfApiToken}`,
               "Content-Type": "application/json"
             }
           }
-        );
+        )
 
-        const embedding = response.data.result.data[0];
+        const embedding = response.data?.result?.data?.[0]
 
-        const { error: updateError } = await supabase
-          .from("documents")
-          .update({ embedding })
-          .eq("id", row.id);
-
-        if (updateError) {
-          console.error("Update error:", updateError);
-        } else {
-          console.log("embedded:", row.id);
+        if (!embedding) {
+          throw new Error("Missing embedding in Cloudflare response")
         }
 
-      } catch (aiError) {
-        console.error(
-          "Cloudflare AI error:",
-          aiError.response?.data || aiError.message
-        );
-      }
+        const { error: updateError } = await supabase.from("documents").update({ embedding }).eq("id", row.id)
 
+        if (updateError) {
+          throw new Error(updateError.message)
+        }
+
+        success += 1
+        console.log(`embedded: ${row.id}`)
+      } catch (error) {
+        failed += 1
+        const message = axios.isAxiosError(error) ? JSON.stringify(error.response?.data ?? error.message) : String(error)
+        console.error(`embed failed for ${row.id}:`, message)
+      }
     }
 
-  } catch (err) {
-    console.error("Script error:", err);
+    console.log(`done. success=${success} failed=${failed}`)
+  } catch (error) {
+    console.error("Script error:", error)
+    process.exit(1)
   }
 }
 
-run();
+run()

@@ -25,9 +25,5 @@ export default function ChatStatus({ isLoading, error }: ChatStatusProps) {
     )
   }
 
-  return (
-    <p className="chat-status" aria-live="polite">
-      พร้อมใช้งาน
-    </p>
-  )
+  return null
 }

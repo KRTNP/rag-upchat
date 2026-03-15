@@ -146,7 +146,7 @@ function makeDirectAnswerNatural(question: string, answer: string) {
         const normalized = part.replace(/\s+/g, " ").trim()
         return normalized.includes(":") ? normalized : normalized.replace(/ภาคการศึกษา/g, "ภาค")
       })
-    return `ได้เลย สรุปกำหนดการให้แบบสั้น ๆ:\n- ${parts.join("\n- ")}`
+    return `ได้เลยครับ ผมสรุปวันสำคัญให้แบบอ่านง่ายนะ\nเผื่อวางแผนส่งเอกสารได้ทันเวลา:\n- ${parts.join("\n- ")}`
   }
 
   if (question.includes("วันไหน") || question.includes("เมื่อไหร่") || question.includes("เดดไลน์")) {
@@ -454,7 +454,7 @@ export async function POST(req: Request) {
     })
   }
 
-  if ((answerMode === "strict" || answerMode === "balanced") && topDoc && topSimilarity >= directAnswerThreshold && directAnswer && canLockAnswer) {
+  if (answerMode === "strict" && topDoc && topSimilarity >= directAnswerThreshold && directAnswer && canLockAnswer) {
     const naturalDirectAnswer = makeDirectAnswerNatural(userQuestion, directAnswer)
     const payload: ChatApiSuccessPayload = {
       answer: naturalDirectAnswer,
@@ -530,15 +530,12 @@ ${userQuestion}
     for (const model of geminiModels) {
       try {
         const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), geminiTimeoutMs, `gemini/${model}`)
-        const finalAnswer =
-          (answerMode === "strict" || answerMode === "balanced") && canLockAnswer
-            ? makeDirectAnswerNatural(userQuestion, directAnswer)
-            : answer
+        const finalAnswer = answerMode === "strict" && canLockAnswer ? makeDirectAnswerNatural(userQuestion, directAnswer) : answer
         const payload: ChatApiSuccessPayload = {
           answer: finalAnswer,
           contextMatches: docs.length,
           fallbackUsed: false,
-          fallbackReason: (answerMode === "strict" || answerMode === "balanced") && canLockAnswer ? "locked-rag-answer" : "none",
+          fallbackReason: answerMode === "strict" && canLockAnswer ? "locked-rag-answer" : "none",
           model
         }
         if (cacheEnabled) {
@@ -561,16 +558,13 @@ ${userQuestion}
     try {
       // Give z.ai full timeout budget from config, independent of Gemini elapsed time.
       const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
-      const finalAnswer =
-        (answerMode === "strict" || answerMode === "balanced") && canLockAnswer
-          ? makeDirectAnswerNatural(userQuestion, directAnswer)
-          : answer
+      const finalAnswer = answerMode === "strict" && canLockAnswer ? makeDirectAnswerNatural(userQuestion, directAnswer) : answer
       const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-failed"
       const payload: ChatApiSuccessPayload = {
         answer: finalAnswer,
         contextMatches: docs.length,
         fallbackUsed: Boolean(geminiApiKey),
-        fallbackReason: (answerMode === "strict" || answerMode === "balanced") && canLockAnswer ? "locked-rag-answer" : fallbackReason,
+        fallbackReason: answerMode === "strict" && canLockAnswer ? "locked-rag-answer" : fallbackReason,
         model: "glm-4.7-flash"
       }
       if (cacheEnabled) {

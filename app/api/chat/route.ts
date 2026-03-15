@@ -258,8 +258,6 @@ ${userQuestion}
   let geminiSawRateLimit = false
   let geminiRetryAfterSec: number | null = null
   const geminiTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 6000)
-  const llmMaxLatencyMs = Number(process.env.LLM_MAX_LATENCY_MS ?? 8000)
-  const llmPhaseStartedAt = Date.now()
 
   if (geminiApiKey) {
     const now = Date.now()
@@ -303,30 +301,29 @@ ${userQuestion}
     if (now < zaiBlockedUntilMs) {
       errors.push(new Error(`zai cooldown active for ${Math.ceil((zaiBlockedUntilMs - now) / 1000)}s`))
     } else {
-    try {
-      const elapsed = Date.now() - llmPhaseStartedAt
-      const remainingBudgetMs = Math.max(llmMaxLatencyMs - elapsed, 1_000)
-      const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt, remainingBudgetMs)
-      const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-rate-limit"
-      const payload: ChatApiSuccessPayload = {
-        answer,
-        contextMatches: docs.length,
-        fallbackUsed: Boolean(geminiApiKey),
-        fallbackReason,
-        model: "glm-4.7-flash"
+      try {
+        // Give z.ai full timeout budget from config, independent of Gemini elapsed time.
+        const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
+        const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-rate-limit"
+        const payload: ChatApiSuccessPayload = {
+          answer,
+          contextMatches: docs.length,
+          fallbackUsed: Boolean(geminiApiKey),
+          fallbackReason,
+          model: "glm-4.7-flash"
+        }
+        if (cacheEnabled) {
+          chatResponseCache.set(cacheKey, payload, cacheTtlMs)
+        }
+        return Response.json({ ...payload, cacheHit: false })
+      } catch (err) {
+        if (shouldCooldownZai(err)) {
+          const cooldownSec = parseRetryAfterSeconds(err) ?? 45
+          zaiBlockedUntilMs = Date.now() + Math.max(5, cooldownSec) * 1000
+        }
+        errors.push(err)
+        console.error("model attempt failed: zai/glm-4.7-flash", err)
       }
-      if (cacheEnabled) {
-        chatResponseCache.set(cacheKey, payload, cacheTtlMs)
-      }
-      return Response.json({ ...payload, cacheHit: false })
-    } catch (err) {
-      if (shouldCooldownZai(err)) {
-        const cooldownSec = parseRetryAfterSeconds(err) ?? 45
-        zaiBlockedUntilMs = Date.now() + Math.max(5, cooldownSec) * 1000
-      }
-      errors.push(err)
-      console.error("model attempt failed: zai/glm-4.7-flash", err)
-    }
     }
   }
 

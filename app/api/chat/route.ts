@@ -300,6 +300,24 @@ ${userQuestion}
 ตอบให้เหมือนกำลังคุยแชทกับเพื่อน
 `
 
+  const preGeminiCooldownSec = geminiApiKey ? await getCooldownRemainingSec("cooldown:gemini") : 0
+  const preZaiCooldownSec = zaiApiKey ? await getCooldownRemainingSec("cooldown:zai") : 0
+  if ((geminiApiKey ? preGeminiCooldownSec > 0 : true) && (zaiApiKey ? preZaiCooldownSec > 0 : true)) {
+    const fallbackItems = docs.map((doc) => docToText(doc)).filter(Boolean).slice(0, 3)
+    const fallbackAnswer = fallbackItems.length
+      ? `ระบบ AI ติดโควต้าชั่วคราวทั้งสองช่องทาง กรุณารอสักครู่ แต่มีข้อมูลอ้างอิงที่เกี่ยวข้อง:\n- ${fallbackItems.join("\n- ")}`
+      : "ระบบ AI ติดโควต้าชั่วคราวทั้งสองช่องทาง กรุณารอสักครู่ แล้วลองใหม่อีกครั้ง"
+
+    const payload: ChatApiSuccessPayload = {
+      answer: fallbackAnswer,
+      contextMatches: docs.length,
+      fallbackUsed: true,
+      fallbackReason: "providers-in-cooldown",
+      model: "context-fallback"
+    }
+    return Response.json({ ...payload, cacheHit: false })
+  }
+
   const errors: unknown[] = []
   let geminiFailed = false
   let geminiSawRateLimit = false
@@ -307,7 +325,7 @@ ${userQuestion}
   const geminiTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 6000)
 
   if (geminiApiKey) {
-    const geminiCooldownSec = await getCooldownRemainingSec("cooldown:gemini")
+    const geminiCooldownSec = preGeminiCooldownSec
     if (geminiCooldownSec > 0) {
       geminiFailed = true
       geminiSawRateLimit = true
@@ -344,7 +362,7 @@ ${userQuestion}
   const shouldUseZaiPrimary = Boolean(zaiApiKey && !geminiApiKey)
 
   if ((shouldUseZaiFallback || shouldUseZaiPrimary) && zaiApiKey) {
-    const zaiCooldownSec = await getCooldownRemainingSec("cooldown:zai")
+    const zaiCooldownSec = preZaiCooldownSec
     if (zaiCooldownSec > 0) {
       errors.push(new Error(`zai cooldown active for ${zaiCooldownSec}s`))
     } else {

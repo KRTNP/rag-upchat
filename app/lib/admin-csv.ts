@@ -3,8 +3,55 @@ export type CsvRow = {
   answer: string
 }
 
+export type CsvValidation = {
+  valid: boolean
+  hasHeader: boolean
+  totalLines: number
+  dataLines: number
+  errors: string[]
+}
+
 function cleanCell(cell: string) {
   return cell.replace(/^\"|\"$/g, "").trim()
+}
+
+export function validateCsvText(csvText: string): CsvValidation {
+  const lines = csvText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length === 0) {
+    return {
+      valid: false,
+      hasHeader: false,
+      totalLines: 0,
+      dataLines: 0,
+      errors: ["ไฟล์ CSV ว่างเปล่า"]
+    }
+  }
+
+  const first = lines[0].toLowerCase()
+  const hasHeader = first.includes("question") || first.includes("answer")
+  const headerOk = !hasHeader || (first.includes("question") && first.includes("answer"))
+  const rows = parseCsvRows(csvText)
+  const errors: string[] = []
+
+  if (!headerOk) {
+    errors.push("บรรทัดหัวตารางต้องมีคอลัมน์ question และ answer")
+  }
+
+  if (rows.length === 0) {
+    errors.push("ไม่พบข้อมูลแถวที่มี question และ answer ครบ")
+  }
+
+  return {
+    valid: errors.length === 0,
+    hasHeader,
+    totalLines: lines.length,
+    dataLines: rows.length,
+    errors
+  }
 }
 
 export function parseCsvRows(csvText: string): CsvRow[] {

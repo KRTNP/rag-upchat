@@ -235,4 +235,20 @@ describe("Chat page", () => {
     })
     await screen.findByText("มาแล้ว")
   })
+
+  test("clicking quick question appends it as a user message", async () => {
+    const fetchMock = mockFetchResponse({ answer: "ตอบจาก quick question" })
+
+    render(<Page />)
+
+    const quickButton = await screen.findByRole("button", { name: "สรุปสิ่งที่เราคุยกันล่าสุดให้หน่อย" })
+    await userEvent.click(quickButton)
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    expect(screen.getByText("สรุปสิ่งที่เราคุยกันล่าสุดให้หน่อย")).toBeInTheDocument()
+    expect(screen.getByText("ตอบจาก quick question")).toBeInTheDocument()
+  })
 })

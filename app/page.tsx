@@ -226,14 +226,14 @@ export default function Page() {
     await appendConversationMessage(conversationId, userId, message)
   }
 
-  async function ask(nextQuestion?: string) {
+  async function ask(nextQuestion?: string, options?: { retry?: boolean }) {
     const prompt = (nextQuestion ?? question).trim()
 
     if (!prompt || isLoading) {
       return
     }
 
-    const fromRetry = Boolean(nextQuestion)
+    const fromRetry = Boolean(options?.retry)
     setError(null)
     setIsLoading(true)
     setLastQuestion(prompt)
@@ -271,7 +271,7 @@ export default function Page() {
           "Content-Type": "application/json",
           "X-Chat-Scope": userId ? "user" : "guest"
         },
-        body: JSON.stringify({ question: prompt, history: compactHistory, mode: "balanced" })
+        body: JSON.stringify({ question: prompt, history: compactHistory, mode: "strict" })
       })
 
       if (!res.ok) {
@@ -731,7 +731,7 @@ export default function Page() {
             </div>
             <div className="chat-actions">
               {error && lastQuestion ? (
-                <button type="button" data-testid="retry-button" className="ghost-button" onClick={() => ask(lastQuestion)}>
+                <button type="button" data-testid="retry-button" className="ghost-button" onClick={() => ask(lastQuestion, { retry: true })}>
                   <RotateCcw size={14} />
                   ลองใหม่
                 </button>

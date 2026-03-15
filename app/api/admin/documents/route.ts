@@ -3,6 +3,11 @@ import { combineDocumentText, splitDocumentText } from "@/app/lib/document-admin
 import { getEmbedding } from "@/app/lib/embedding"
 import { getSupabaseAdminClient } from "@/app/lib/supabase-admin"
 
+function isDuplicateDocumentPkError(message: string) {
+  const text = message.toLowerCase()
+  return text.includes("documents_pkey") || text.includes("duplicate key value")
+}
+
 export async function GET(req: Request) {
   if (!(await assertAdminRequest(req))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
@@ -59,10 +64,22 @@ export async function POST(req: Request) {
     }
 
     const supabase = getSupabaseAdminClient()
-    const { data, error } = await supabase.from("documents").insert({ content }).select("id,content").single()
+    let { data, error } = await supabase.from("documents").insert({ content }).select("id,content").single()
 
-    if (error) {
-      return Response.json({ error: error.message }, { status: 500 })
+    if (error && isDuplicateDocumentPkError(error.message)) {
+      const last = await supabase.from("documents").select("id").order("id", { ascending: false }).limit(1).maybeSingle()
+      if (last.error) {
+        return Response.json({ error: last.error.message }, { status: 500 })
+      }
+
+      const nextId = ((last.data as { id?: number } | null)?.id ?? 0) + 1
+      const retry = await supabase.from("documents").insert({ id: nextId, content }).select("id,content").single()
+      data = retry.data
+      error = retry.error
+    }
+
+    if (error || !data) {
+      return Response.json({ error: error?.message ?? "Insert failed" }, { status: 500 })
     }
 
     if (embedNow && data) {

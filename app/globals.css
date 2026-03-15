@@ -1332,6 +1332,10 @@ body {
   justify-content: space-between;
   gap: 1rem;
   align-items: flex-start;
+  border: 1px solid #e0d5c4;
+  border-radius: 14px;
+  padding: 1rem 1.1rem;
+  background: linear-gradient(120deg, #fffaf0 0%, #fff 60%, #f4ecff 100%);
 }
 
 .admin-header h1 {
@@ -1345,10 +1349,34 @@ body {
   color: var(--muted);
 }
 
+.admin-header-copy {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.admin-title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .admin-header-actions {
   display: flex;
   gap: 0.6rem;
   flex-wrap: wrap;
+}
+
+.admin-action-primary {
+  border-color: #bda5df;
+  background: #f4edff;
+  color: #4a2578;
+  font-weight: 700;
+}
+
+.admin-action-secondary {
+  border-color: #d7ccb9;
+  background: #fffdfa;
 }
 
 .admin-grid {
@@ -1364,10 +1392,10 @@ body {
 }
 
 .metric-card {
-  background: var(--bg-alt);
-  border: 1px solid var(--line);
+  background: #fff;
+  border: 1px solid #e3d8c7;
   border-radius: 10px;
-  padding: 1rem;
+  padding: 0.95rem 1rem;
 }
 
 .metric-card h3 {
@@ -1377,10 +1405,114 @@ body {
 }
 
 .metric-card p {
-  margin: 0.5rem 0 0;
-  font-size: 1.8rem;
+  margin: 0.35rem 0 0;
+  font-size: 2rem;
   font-weight: 700;
-  color: var(--accent);
+  color: #3f2864;
+}
+
+.metric-card.tone-success p {
+  color: #16803d;
+}
+
+.metric-card.tone-warning p {
+  color: #c45516;
+}
+
+.metric-card.tone-accent p {
+  color: #5c2f9a;
+}
+
+.admin-block-title {
+  margin: 0 0 1rem;
+  font-size: 1.15rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.admin-helper-text {
+  font-size: 0.85rem;
+  margin: 0 0 1rem;
+}
+
+.admin-primary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.admin-primary-button-full {
+  width: 100%;
+  justify-content: center;
+}
+
+.admin-auth-loading {
+  display: flex;
+  justify-content: center;
+  padding: 3rem;
+}
+
+.admin-auth-card {
+  max-width: 400px;
+  margin: 2rem auto;
+}
+
+.admin-auth-head {
+  text-align: center;
+  margin-bottom: 1.5rem;
+  display: grid;
+  justify-items: center;
+}
+
+.admin-auth-icon {
+  margin: 0 auto 1rem;
+}
+
+.admin-auth-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #d6c7eb;
+  background: #f7f1ff;
+  color: #4a2578;
+  border-radius: 999px;
+  padding: 0.24rem 0.62rem;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin-bottom: 0.55rem;
+}
+
+.admin-auth-title {
+  font-size: 1.5rem;
+  margin: 0;
+}
+
+.admin-auth-subtitle {
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.admin-auth-actions {
+  margin-top: 0.5rem;
+}
+
+.admin-auth-submit {
+  width: 100%;
+  display: inline-flex;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.admin-auth-backlink {
+  text-align: center;
+  margin-top: 0.8rem;
+}
+
+.admin-auth-toast {
+  margin-top: 1rem;
+  text-align: center;
 }
 
 .admin-form {
@@ -1456,6 +1588,39 @@ body {
   margin-bottom: 1rem;
 }
 
+.table-search-wrap {
+  position: relative;
+}
+
+.table-search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+}
+
+.table-search-input {
+  padding-left: 34px !important;
+  width: 250px;
+}
+
+.density-toggle {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+
+.density-toggle .ghost-button {
+  padding: 0.38rem 0.62rem;
+  font-size: 0.78rem;
+}
+
+.density-toggle .ghost-button.active {
+  border-color: #b39667;
+  background: #fff4e0;
+  color: #3d2a5d;
+}
+
 .table-actions {
   display: flex;
   gap: 0.5rem;
@@ -1502,6 +1667,49 @@ body {
   position: sticky;
   top: 0;
   z-index: 1;
+}
+
+.admin-table .col-id {
+  width: 68px;
+}
+
+.admin-table .col-question {
+  width: 30%;
+}
+
+.admin-table .col-answer {
+  width: 45%;
+}
+
+.admin-table.is-compact th,
+.admin-table.is-compact td {
+  padding: 0.56rem 0.72rem;
+  font-size: 0.84rem;
+}
+
+.admin-table-toast {
+  margin-bottom: 1rem;
+}
+
+.admin-empty-cell {
+  text-align: center;
+  padding: 2rem;
+}
+
+.admin-empty-text {
+  margin: 0;
+}
+
+.admin-clear-search {
+  margin-top: 0.8rem;
+}
+
+.admin-delete-action {
+  color: var(--danger);
+}
+
+.admin-pagination-meta {
+  font-size: 0.9rem;
 }
 
 .row-actions {

@@ -7,6 +7,21 @@ export const STATIC_QUICK_QUESTIONS = [
 ]
 
 export function buildDynamicQuickQuestions(messages: ChatMessage[]) {
+  const lastBot = [...messages].reverse().find((item) => item.role === "bot")
+  if (lastBot?.text) {
+    const suggestionLines = lastBot.text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.replace(/^-+\s*/, "").trim())
+      .filter(Boolean)
+      .slice(0, 3)
+
+    if (suggestionLines.length > 0) {
+      return suggestionLines
+    }
+  }
+
   const lastUser = [...messages].reverse().find((item) => item.role === "user")
 
   if (!lastUser) {

@@ -616,14 +616,6 @@ export default function Page() {
             </section>
           ) : null}
 
-          <section className="quick-questions" aria-label="คำถามที่พบบ่อย">
-            {quickQuestions.slice(0, 5).map((item, index) => (
-              <button key={`${item}-${index}`} type="button" className="ghost-button" onClick={() => setQuestion(item)}>
-                {item}
-              </button>
-            ))}
-          </section>
-
           <MessageList messages={messages} />
 
           <div className="chat-toolbar">
@@ -650,6 +642,14 @@ export default function Page() {
               </button>
             </div>
           </div>
+
+          <section className="quick-questions quick-questions-bottom" aria-label="คำถามแนะนำ">
+            {quickQuestions.slice(0, 5).map((item, index) => (
+              <button key={`${item}-${index}`} type="button" className="ghost-button" disabled={isLoading} onClick={() => ask(item)}>
+                {item}
+              </button>
+            ))}
+          </section>
 
           <ChatComposer value={question} disabled={isLoading} onChange={setQuestion} onSubmit={() => ask()} />
         </div>

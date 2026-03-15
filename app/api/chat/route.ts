@@ -1,7 +1,9 @@
 import { GoogleGenerativeAI } from "@google/generative-ai"
+import { createHash } from "crypto"
 import { docToText } from "@/app/lib/document-text"
 import { getEmbedding } from "@/app/lib/embedding"
 import { checkProhibitedKeyword, isOutOfScopeQuestion, parseProhibitedKeywords } from "@/app/lib/guardrails"
+import { ResponseCache } from "@/app/lib/response-cache"
 import { checkRateLimit } from "@/app/lib/server-rate-limit"
 import { getSupabaseClient } from "@/app/lib/supabase"
 
@@ -16,6 +18,36 @@ type MatchedDoc = {
 type ChatTurn = {
   role: "user" | "bot"
   text: string
+}
+
+type ChatApiSuccessPayload = {
+  answer: string
+  contextMatches: number
+  fallbackUsed: boolean
+  fallbackReason: string
+  model: string
+}
+
+const chatResponseCache = new ResponseCache<ChatApiSuccessPayload>()
+
+function buildCacheKey(question: string, history: ChatTurn[]) {
+  const compactHistory = history.slice(-4).map((turn) => `${turn.role}:${turn.text}`).join("|")
+  return createHash("sha1").update(`${question.trim().toLowerCase()}::${compactHistory}`).digest("hex")
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timeout after ${timeoutMs}ms`)), timeoutMs)
+    promise
+      .then((value) => {
+        clearTimeout(timer)
+        resolve(value)
+      })
+      .catch((error) => {
+        clearTimeout(timer)
+        reject(error)
+      })
+  })
 }
 
 async function generateWithModel(apiKey: string, modelName: string, prompt: string) {
@@ -78,9 +110,21 @@ function isRateLimitError(error: unknown) {
 export async function POST(req: Request) {
   const { question, history } = (await req.json()) as { question?: string; history?: ChatTurn[] }
   const userQuestion = (question ?? "").trim()
+  const safeHistory = history ?? []
+  const chatScope = req.headers.get("x-chat-scope") === "user" ? "user" : "guest"
 
   if (!userQuestion) {
     return Response.json({ error: "Missing question", fallbackReason: "invalid-request" }, { status: 400 })
+  }
+
+  const cacheTtlMs = Number(process.env.CHAT_RESPONSE_CACHE_TTL_MS ?? 60_000)
+  const cacheKey = buildCacheKey(userQuestion, safeHistory)
+  const cacheEnabled = chatScope === "guest"
+  if (cacheEnabled) {
+    const cached = chatResponseCache.get(cacheKey)
+    if (cached) {
+      return Response.json({ ...cached, cacheHit: true })
+    }
   }
 
   const clientIp = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown"
@@ -123,7 +167,7 @@ export async function POST(req: Request) {
 
   const primary = await supabase.rpc("match_documents", {
     query_embedding: embedding,
-    match_threshold: 0.7,
+    match_threshold: 0.6,
     match_count: 3
   })
 
@@ -131,21 +175,7 @@ export async function POST(req: Request) {
     console.error("search error:", primary.error)
   }
 
-  let docs = (primary.data ?? []) as MatchedDoc[]
-
-  if (!docs.length) {
-    const fallback = await supabase.rpc("match_documents", {
-      query_embedding: embedding,
-      match_threshold: 0,
-      match_count: 3
-    })
-
-    if (fallback.error) {
-      console.error("fallback search error:", fallback.error)
-    } else {
-      docs = (fallback.data ?? []) as MatchedDoc[]
-    }
-  }
+  const docs = (primary.data ?? []) as MatchedDoc[]
 
   const maxSimilarity = Math.max(0, ...docs.map((doc) => doc.similarity ?? 0))
   if (isOutOfScopeQuestion(userQuestion, maxSimilarity)) {
@@ -159,8 +189,8 @@ export async function POST(req: Request) {
   }
 
   const context = docs.map(docToText).filter(Boolean).join("\n")
-  const recentHistory = (history ?? [])
-    .slice(-12)
+  const recentHistory = safeHistory
+    .slice(-6)
     .map((turn) => `${turn.role === "user" ? "ผู้ใช้" : "ผู้ช่วย"}: ${turn.text}`)
     .join("\n")
 
@@ -189,14 +219,19 @@ ${userQuestion}
   const errors: unknown[] = []
   let geminiFailed = false
   let geminiSawRateLimit = false
+  const modelTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 9000)
 
   if (geminiApiKey) {
     const geminiModels = ["gemini-2.5-flash", "gemini-1.5-flash"] as const
 
     for (const model of geminiModels) {
       try {
-        const answer = await generateWithModel(geminiApiKey, model, prompt)
-        return Response.json({ answer, contextMatches: docs.length, fallbackUsed: false, fallbackReason: "none", model })
+        const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), modelTimeoutMs, `gemini/${model}`)
+        const payload: ChatApiSuccessPayload = { answer, contextMatches: docs.length, fallbackUsed: false, fallbackReason: "none", model }
+        if (cacheEnabled) {
+          chatResponseCache.set(cacheKey, payload, cacheTtlMs)
+        }
+        return Response.json({ ...payload, cacheHit: false })
       } catch (err) {
         geminiFailed = true
         geminiSawRateLimit = geminiSawRateLimit || isRateLimitError(err)
@@ -211,9 +246,19 @@ ${userQuestion}
 
   if ((shouldUseZaiFallback || shouldUseZaiPrimary) && zaiApiKey) {
     try {
-      const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
+      const answer = await withTimeout(generateWithZai(zaiApiKey, "glm-4.7-flash", prompt), modelTimeoutMs, "zai/glm-4.7-flash")
       const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-rate-limit"
-      return Response.json({ answer, contextMatches: docs.length, fallbackUsed: Boolean(geminiApiKey), fallbackReason, model: "glm-4.7-flash" })
+      const payload: ChatApiSuccessPayload = {
+        answer,
+        contextMatches: docs.length,
+        fallbackUsed: Boolean(geminiApiKey),
+        fallbackReason,
+        model: "glm-4.7-flash"
+      }
+      if (cacheEnabled) {
+        chatResponseCache.set(cacheKey, payload, cacheTtlMs)
+      }
+      return Response.json({ ...payload, cacheHit: false })
     } catch (err) {
       errors.push(err)
       console.error("model attempt failed: zai/glm-4.7-flash", err)
@@ -232,11 +277,13 @@ ${userQuestion}
   }
 
   const finalFallbackReason = quotaLikeFailure ? "all-models-failed-after-rate-limit" : "all-models-failed-non-rate-limit"
-  return Response.json({
+  const fallbackPayload: ChatApiSuccessPayload = {
     answer: fallbackAnswer,
     contextMatches: docs.length,
     fallbackUsed: true,
     fallbackReason: finalFallbackReason,
     model: "context-fallback"
-  })
+  }
+  // Avoid caching context-only fallback to reduce stale/low-quality repeats.
+  return Response.json({ ...fallbackPayload, cacheHit: false })
 }

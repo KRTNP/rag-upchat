@@ -30,6 +30,8 @@ GEMINI_API_KEY=...
 ZAI_API_KEY=...
 SERVER_RATE_LIMIT_MAX=20
 SERVER_RATE_LIMIT_WINDOW_MS=60000
+MODEL_TIMEOUT_MS=9000
+CHAT_RESPONSE_CACHE_TTL_MS=60000
 PROHIBITED_KEYWORDS=keyword1,keyword2
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
@@ -166,6 +168,8 @@ npm run test:e2e
 
 - Client-side quota: จำกัดจำนวนข้อความรายวันของ guest ผ่าน `NEXT_PUBLIC_CLIENT_DAILY_QUOTA`
 - Server-side rate limit: จำกัดตาม IP ผ่าน `SERVER_RATE_LIMIT_MAX` และ `SERVER_RATE_LIMIT_WINDOW_MS`
+- Model timeout: ตัดคำขอโมเดลที่ช้าเกินกำหนดผ่าน `MODEL_TIMEOUT_MS`
+- Response cache: แคชคำตอบระยะสั้นผ่าน `CHAT_RESPONSE_CACHE_TTL_MS` เพื่อลด latency ของคำถามซ้ำ
 - Prohibited keywords: block ก่อนถึง LLM ผ่าน `PROHIBITED_KEYWORDS`
 - Out-of-scope rule: ถ้าคำถามนอกขอบเขตและไม่ match ฐานความรู้เพียงพอ ระบบจะปฏิเสธแบบสุภาพ
 

@@ -239,13 +239,15 @@ export default function Page() {
       const history = fromRetry
         ? messages.map((m) => ({ role: m.role, text: m.text }))
         : [...messages, userMsg].map((m) => ({ role: m.role, text: m.text }))
+      const compactHistory = history.slice(-8)
 
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "X-Chat-Scope": userId ? "user" : "guest"
         },
-        body: JSON.stringify({ question: prompt, history })
+        body: JSON.stringify({ question: prompt, history: compactHistory })
       })
 
       if (!res.ok) {

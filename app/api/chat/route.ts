@@ -59,8 +59,9 @@ async function generateWithModel(apiKey: string, modelName: string, prompt: stri
   return result.response.text()
 }
 
-async function generateWithZai(apiKey: string, modelName: string, prompt: string) {
-  const timeoutMs = Number(process.env.ZAI_MODEL_TIMEOUT_MS ?? 15_000)
+async function generateWithZai(apiKey: string, modelName: string, prompt: string, timeoutOverrideMs?: number) {
+  const baseTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 6000)
+  const timeoutMs = timeoutOverrideMs ?? Math.max(baseTimeoutMs * 2, 10_000)
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
 
@@ -255,7 +256,9 @@ ${userQuestion}
   const errors: unknown[] = []
   let geminiFailed = false
   let geminiSawRateLimit = false
-  const geminiTimeoutMs = Number(process.env.GEMINI_MODEL_TIMEOUT_MS ?? process.env.MODEL_TIMEOUT_MS ?? 6000)
+  const geminiTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 6000)
+  const llmMaxLatencyMs = Number(process.env.LLM_MAX_LATENCY_MS ?? 8000)
+  const llmPhaseStartedAt = Date.now()
 
   if (geminiApiKey) {
     const now = Date.now()
@@ -298,7 +301,9 @@ ${userQuestion}
       errors.push(new Error(`zai cooldown active for ${Math.ceil((zaiBlockedUntilMs - now) / 1000)}s`))
     } else {
     try {
-      const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
+      const elapsed = Date.now() - llmPhaseStartedAt
+      const remainingBudgetMs = Math.max(llmMaxLatencyMs - elapsed, 1_000)
+      const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt, remainingBudgetMs)
       const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-rate-limit"
       const payload: ChatApiSuccessPayload = {
         answer,
@@ -313,7 +318,7 @@ ${userQuestion}
       return Response.json({ ...payload, cacheHit: false })
     } catch (err) {
       if (shouldCooldownZai(err)) {
-        const cooldownSec = parseRetryAfterSeconds(err) ?? Number(process.env.ZAI_COOLDOWN_SECONDS_ON_FAILURE ?? 45)
+        const cooldownSec = parseRetryAfterSeconds(err) ?? 45
         zaiBlockedUntilMs = Date.now() + Math.max(5, cooldownSec) * 1000
       }
       errors.push(err)

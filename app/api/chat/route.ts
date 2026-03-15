@@ -30,6 +30,7 @@ type ChatApiSuccessPayload = {
 
 const chatResponseCache = new ResponseCache<ChatApiSuccessPayload>()
 let geminiBlockedUntilMs = 0
+let zaiBlockedUntilMs = 0
 
 function buildCacheKey(question: string, history: ChatTurn[]) {
   const compactHistory = history.slice(-4).map((turn) => `${turn.role}:${turn.text}`).join("|")
@@ -135,6 +136,11 @@ function parseRetryAfterSeconds(error: unknown) {
   }
 
   return null
+}
+
+function shouldCooldownZai(error: unknown) {
+  const message = (error instanceof Error ? error.message : String(error ?? "")).toLowerCase()
+  return message.includes("timeout") || message.includes("429") || message.includes("rate limit") || message.includes("unavailable")
 }
 
 export async function POST(req: Request) {
@@ -287,6 +293,10 @@ ${userQuestion}
   const shouldUseZaiPrimary = Boolean(zaiApiKey && !geminiApiKey)
 
   if ((shouldUseZaiFallback || shouldUseZaiPrimary) && zaiApiKey) {
+    const now = Date.now()
+    if (now < zaiBlockedUntilMs) {
+      errors.push(new Error(`zai cooldown active for ${Math.ceil((zaiBlockedUntilMs - now) / 1000)}s`))
+    } else {
     try {
       const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
       const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-rate-limit"
@@ -302,8 +312,13 @@ ${userQuestion}
       }
       return Response.json({ ...payload, cacheHit: false })
     } catch (err) {
+      if (shouldCooldownZai(err)) {
+        const cooldownSec = parseRetryAfterSeconds(err) ?? Number(process.env.ZAI_COOLDOWN_SECONDS_ON_FAILURE ?? 45)
+        zaiBlockedUntilMs = Date.now() + Math.max(5, cooldownSec) * 1000
+      }
       errors.push(err)
       console.error("model attempt failed: zai/glm-4.7-flash", err)
+    }
     }
   }
 

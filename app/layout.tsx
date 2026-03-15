@@ -1,22 +1,22 @@
 import type { Metadata } from "next";
-import { Fraunces, Manrope } from "next/font/google";
+import { Prompt, Sarabun } from "next/font/google";
 import "./globals.css";
 
-const bodyFont = Manrope({
+const bodyFont = Prompt({
   variable: "--font-body",
-  subsets: ["latin"],
-  weight: ["400", "500", "700"],
+  subsets: ["latin", "thai"],
+  weight: ["300", "400", "500", "600"],
 });
 
-const displayFont = Fraunces({
+const displayFont = Sarabun({
   variable: "--font-display",
-  subsets: ["latin"],
-  weight: ["600", "700"],
+  subsets: ["latin", "thai"],
+  weight: ["500", "600", "700"],
 });
 
 export const metadata: Metadata = {
-  title: "RAG Upchat",
-  description: "Context-aware RAG chat interface powered by Supabase vector search and Gemini.",
+  title: "RAG Upchat | มหาวิทยาลัยพะเยา",
+  description: "ระบบผู้ช่วย AI สำหรับตอบคำถามและให้ข้อมูล อ้างอิงบริบทจากฐานข้อมูล",
 };
 
 export default function RootLayout({
@@ -25,7 +25,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="th">
       <body className={`${bodyFont.variable} ${displayFont.variable} antialiased`}>
         {children}
       </body>

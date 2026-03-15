@@ -1,0 +1,25 @@
+import type { ChatMessage } from "@/app/lib/chat-types"
+
+export const STATIC_QUICK_QUESTIONS = [
+  "สรุปสิ่งที่เราคุยกันล่าสุดให้หน่อย",
+  "ช่วยอธิบายแบบสั้น ๆ สำหรับมือใหม่",
+  "ถ้าต้องลงมือทำจริง ควรเริ่มจากขั้นตอนไหน"
+]
+
+export function buildDynamicQuickQuestions(messages: ChatMessage[]) {
+  const lastUser = [...messages].reverse().find((item) => item.role === "user")
+
+  if (!lastUser) {
+    return [
+      "มีเดดไลน์สำคัญอะไรที่ควรรู้บ้าง",
+      "สรุปหัวข้อที่ควรถามต่อให้หน่อย"
+    ]
+  }
+
+  const snippet = lastUser.text.replace(/\s+/g, " ").trim().slice(0, 42)
+
+  return [
+    `จากเรื่อง \"${snippet}\" มีข้อยกเว้นอะไรบ้าง`,
+    `ช่วยเปรียบเทียบทางเลือกที่เกี่ยวกับ \"${snippet}\" ให้หน่อย`
+  ]
+}

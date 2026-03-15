@@ -1,14 +1,45 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import Link from "next/link"
+import Image from "next/image"
+import {
+  Plus, Search, Pin, PinOff, Edit2, Trash2, ArrowUp, ArrowDown,
+  Settings, LogOut, RotateCcw, Eraser, PanelLeft, PanelLeftClose
+} from "lucide-react"
+import AppToast from "@/app/components/app-toast"
 import ChatComposer from "@/app/components/chat-composer"
 import ChatShell from "@/app/components/chat-shell"
 import ChatStatus from "@/app/components/chat-status"
 import MessageList from "@/app/components/message-list"
-import { loadMessagesFromStorage, saveMessagesToStorage } from "@/app/lib/chat-storage"
+import {
+  appendConversationMessage,
+  clearConversation,
+  createConversation,
+  deleteConversation,
+  getCurrentUser,
+  listConversations,
+  loadConversationMessages,
+  loadGuestMessages,
+  loadPinnedConversationIds,
+  renameConversation,
+  savePinnedConversationIds,
+  saveGuestMessages,
+  signOut,
+  type ConversationSummary
+} from "@/app/lib/chat-memory"
 import type { ChatMessage } from "@/app/lib/chat-types"
+import { consumeGuestDailyQuota } from "@/app/lib/client-quota"
+import { deriveConversationTitle, isAutoTitleCandidate } from "@/app/lib/conversation-title"
+import { buildDynamicQuickQuestions, STATIC_QUICK_QUESTIONS } from "@/app/lib/quick-questions"
 
-const ERROR_MESSAGE = "Unable to get a response. Please try again."
+const ERROR_MESSAGE = "ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง"
+const CLIENT_DAILY_QUOTA = Number(process.env.NEXT_PUBLIC_CLIENT_DAILY_QUOTA ?? 40)
+
+type ToastState = {
+  kind: "info" | "success" | "error"
+  text: string
+}
 
 function makeMessage(role: ChatMessage["role"], text: string): ChatMessage {
   return {
@@ -25,20 +56,141 @@ export default function Page() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastQuestion, setLastQuestion] = useState("")
-  const [storageReady, setStorageReady] = useState(false)
+
+  const [userId, setUserId] = useState<string | null>(null)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [conversationId, setConversationId] = useState<string | null>(null)
+  const [conversations, setConversations] = useState<ConversationSummary[]>([])
+  const [loadingConversations, setLoadingConversations] = useState(false)
+  const [sidebarQuery, setSidebarQuery] = useState("")
+  const [renamingConversationId, setRenamingConversationId] = useState<string | null>(null)
+  const [renamingTitle, setRenamingTitle] = useState("")
+  const [pinnedConversationIds, setPinnedConversationIds] = useState<string[]>([])
+  const [sidebarVisible, setSidebarVisible] = useState(false)
+  const [hasBrandLogo, setHasBrandLogo] = useState(true)
+  const sidebarSearchRef = useRef<HTMLInputElement | null>(null)
+
+  const [booting, setBooting] = useState(true)
+  const [toast, setToast] = useState<ToastState | null>(null)
+
+  const dynamicQuickQuestions = useMemo(() => buildDynamicQuickQuestions(messages), [messages])
+  const quickQuestions = useMemo(() => [...STATIC_QUICK_QUESTIONS, ...dynamicQuickQuestions], [dynamicQuickQuestions])
+  const filteredConversations = useMemo(() => {
+    const query = sidebarQuery.trim().toLowerCase()
+    if (!query) return conversations
+    return conversations.filter((item) => item.title.toLowerCase().includes(query))
+  }, [conversations, sidebarQuery])
+  const orderedConversations = useMemo(() => {
+    if (pinnedConversationIds.length === 0) return filteredConversations
+    const pinnedSet = new Set(pinnedConversationIds)
+    const pinnedOrder = new Map(pinnedConversationIds.map((id, index) => [id, index]))
+    return [...filteredConversations].sort((a, b) => {
+      const aPinned = pinnedSet.has(a.id)
+      const bPinned = pinnedSet.has(b.id)
+      if (aPinned && bPinned) {
+        return (pinnedOrder.get(a.id) ?? 0) - (pinnedOrder.get(b.id) ?? 0)
+      }
+      if (aPinned) return -1
+      if (bPinned) return 1
+      return 0
+    })
+  }, [filteredConversations, pinnedConversationIds])
+  const pinnedConversationSet = useMemo(() => new Set(pinnedConversationIds), [pinnedConversationIds])
+
+  function showToast(kind: ToastState["kind"], text: string) {
+    setToast({ kind, text })
+    setTimeout(() => setToast(null), 3000)
+  }
+
+  async function reloadConversations(nextUserId: string) {
+    setLoadingConversations(true)
+    try {
+      const rows = await listConversations(nextUserId)
+      setConversations(rows)
+      return rows
+    } finally {
+      setLoadingConversations(false)
+    }
+  }
+
+  async function openConversation(nextConversationId: string) {
+    setConversationId(nextConversationId)
+    const loaded = await loadConversationMessages(nextConversationId)
+    setMessages(loaded)
+  }
 
   useEffect(() => {
-    setMessages(loadMessagesFromStorage())
-    setStorageReady(true)
+    setMessages(loadGuestMessages())
+
+    getCurrentUser()
+      .then(async (user) => {
+        if (!user) {
+          return
+        }
+
+        setUserId(user.id)
+        setUserEmail(user.email ?? null)
+
+        let rows = await reloadConversations(user.id)
+        if (!rows.length) {
+          const first = await createConversation(user.id, "การสนทนาใหม่")
+          rows = [first]
+          setConversations(rows)
+        }
+
+        await openConversation(rows[0].id)
+        showToast("info", "โหลดประวัติการสนทนาจากคลาวด์สำเร็จ")
+      })
+      .catch((initError) => {
+        const message = initError instanceof Error ? initError.message : "การตรวจสอบสิทธิ์ล้มเหลว"
+        showToast("error", message)
+      })
+      .finally(() => {
+        setBooting(false)
+      })
   }, [])
 
   useEffect(() => {
-    if (!storageReady) {
+    if (userId) {
       return
     }
 
-    saveMessagesToStorage(messages)
-  }, [messages, storageReady])
+    saveGuestMessages(messages)
+  }, [messages, userId])
+
+  useEffect(() => {
+    if (!userId) {
+      setPinnedConversationIds([])
+      return
+    }
+
+    setPinnedConversationIds(loadPinnedConversationIds(userId))
+  }, [userId])
+
+  useEffect(() => {
+    if (!userId) {
+      return
+    }
+
+    savePinnedConversationIds(userId, pinnedConversationIds)
+  }, [pinnedConversationIds, userId])
+
+  useEffect(() => {
+    if (conversations.length === 0) {
+      return
+    }
+
+    const validIds = new Set(conversations.map((item) => item.id))
+    setPinnedConversationIds((prev) => prev.filter((id) => validIds.has(id)))
+  }, [conversations])
+
+  async function saveCloudMessage(message: ChatMessage) {
+    if (!conversationId || !userId) {
+      return
+    }
+
+    await appendConversationMessage(conversationId, userId, message)
+  }
 
   async function ask(nextQuestion?: string) {
     const prompt = (nextQuestion ?? question).trim()
@@ -47,87 +199,480 @@ export default function Page() {
       return
     }
 
+    if (!userId) {
+      const quota = consumeGuestDailyQuota(CLIENT_DAILY_QUOTA)
+      if (!quota.allowed) {
+        const message = `ถึงโควต้ารายวัน (${quota.limit} ข้อความ/วัน) สำหรับโหมดผู้เยี่ยมชม`
+        setError(message)
+        showToast("error", message)
+        return
+      }
+    }
+
     const fromRetry = Boolean(nextQuestion)
     setError(null)
     setIsLoading(true)
     setLastQuestion(prompt)
 
+    const userMsg = makeMessage("user", prompt)
+
     if (!fromRetry) {
-      setMessages((prev) => [...prev, makeMessage("user", prompt)])
+      setQuestion("")
+      setMessages((prev) => [...prev, userMsg])
+      saveCloudMessage(userMsg).catch(() => {
+        showToast("error", "บันทึกเฉพาะในอุปกรณ์ (ซิงค์คลาวด์ล้มเหลว)")
+      })
+
+      if (userId && conversationId) {
+        const active = conversations.find((row) => row.id === conversationId)
+        if (active && isAutoTitleCandidate(active.title)) {
+          const nextTitle = deriveConversationTitle(prompt)
+          setConversations((prev) => prev.map((row) => (row.id === conversationId ? { ...row, title: nextTitle } : row)))
+          renameConversation(conversationId, nextTitle).catch(() => {
+            showToast("error", "ไม่สามารถอัปเดตชื่อการสนทนาได้")
+          })
+        }
+      }
     }
 
     try {
+      const history = fromRetry
+        ? messages.map((m) => ({ role: m.role, text: m.text }))
+        : [...messages, userMsg].map((m) => ({ role: m.role, text: m.text }))
+
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ question: prompt })
+        body: JSON.stringify({ question: prompt, history })
       })
 
       if (!res.ok) {
-        throw new Error(`Request failed: ${res.status}`)
+        const payload = (await res.json().catch(() => ({}))) as { error?: string; retryAfterSec?: number }
+        const retrySuffix = payload.retryAfterSec ? ` (ลองใหม่ใน ${payload.retryAfterSec}s)` : ""
+        throw new Error(payload.error ? `${payload.error}${retrySuffix}` : `คำขอขัดข้อง: ${res.status}`)
       }
 
       const data = (await res.json()) as { answer?: string }
       const answer = data.answer
 
       if (!answer) {
-        throw new Error("Missing answer in response")
+        throw new Error("ไม่มีข้อมูลตอบกลับจากระบบ")
       }
 
-      setMessages((prev) => [...prev, makeMessage("bot", answer)])
-      setQuestion("")
-    } catch {
-      setError(ERROR_MESSAGE)
+      const botMsg = makeMessage("bot", answer)
+      setMessages((prev) => [...prev, botMsg])
+
+      await saveCloudMessage(botMsg).catch(() => {
+        showToast("error", "บันทึกเฉพาะในอุปกรณ์ (ซิงค์คลาวด์ล้มเหลว)")
+      })
+
+      if (userId) {
+        await reloadConversations(userId)
+      }
+    } catch (apiError) {
+      const message = apiError instanceof Error ? apiError.message : ""
+      const exposeMessage =
+        /too many requests|blocked by policy|คำขอขัดข้อง|ลองใหม่ใน|โควต้ารายวัน|missing/i.test(message)
+      setError(exposeMessage ? message : ERROR_MESSAGE)
     } finally {
       setIsLoading(false)
     }
   }
 
-  function clearChat() {
+  async function handleLogout() {
+    await signOut()
+    setUserId(null)
+    setUserEmail(null)
+    setConversationId(null)
+    setConversations([])
+    showToast("info", "ออกจากระบบแล้ว กลับสู่โหมดผู้เยี่ยมชม")
+  }
+
+  async function handleNewConversation() {
+    if (!userId) {
+      showToast("info", "กรุณาเข้าสู่ระบบเพื่อใช้งานประวัติการสนทนาหลายรายการ")
+      return
+    }
+
+    try {
+      const created = await createConversation(userId, "การสนทนาใหม่")
+      setConversations((prev) => [created, ...prev])
+      setConversationId(created.id)
+      setMessages([])
+      setError(null)
+      setLastQuestion("")
+      showToast("success", "เริ่มการสนทนาใหม่แล้ว")
+    } catch (createError) {
+      const message = createError instanceof Error ? createError.message : "ไม่สามารถสร้างการสนทนาได้"
+      showToast("error", message)
+    }
+  }
+
+  async function handleDeleteConversation(conversation: ConversationSummary) {
+    if (!userId) return
+    if (!window.confirm(`ยืนยันการลบ \"${conversation.title}\"?`)) return
+
+    try {
+      await deleteConversation(conversation.id)
+      setPinnedConversationIds((prev) => prev.filter((id) => id !== conversation.id))
+      const rows = await reloadConversations(userId)
+
+      if (!rows.length) {
+        const created = await createConversation(userId, "การสนทนาใหม่")
+        setConversations([created])
+        await openConversation(created.id)
+      } else {
+        const next = rows[0]
+        await openConversation(next.id)
+      }
+
+      showToast("success", "ลบการสนทนาสำเร็จ")
+    } catch (deleteError) {
+      const message = deleteError instanceof Error ? deleteError.message : "ไม่สามารถลบการสนทนาได้"
+      showToast("error", message)
+    }
+  }
+
+  function handleTogglePin(conversationIdValue: string) {
+    setPinnedConversationIds((prev) => {
+      if (prev.includes(conversationIdValue)) {
+        return prev.filter((id) => id !== conversationIdValue)
+      }
+
+      return [conversationIdValue, ...prev]
+    })
+  }
+
+  function handleMovePinned(conversationIdValue: string, direction: "up" | "down") {
+    setPinnedConversationIds((prev) => {
+      const index = prev.indexOf(conversationIdValue)
+      if (index === -1) return prev
+
+      const target = direction === "up" ? index - 1 : index + 1
+      if (target < 0 || target >= prev.length) return prev
+
+      const next = [...prev]
+      const [moved] = next.splice(index, 1)
+      next.splice(target, 0, moved)
+      return next
+    })
+  }
+
+  function startRename(conversation: ConversationSummary) {
+    setRenamingConversationId(conversation.id)
+    setRenamingTitle(conversation.title)
+  }
+
+  function cancelRename() {
+    setRenamingConversationId(null)
+    setRenamingTitle("")
+  }
+
+  async function saveRename(conversation: ConversationSummary) {
+    if (!userId) return
+    const nextTitle = renamingTitle.trim()
+
+    if (!nextTitle || nextTitle === conversation.title) {
+      cancelRename()
+      return
+    }
+
+    try {
+      await renameConversation(conversation.id, nextTitle)
+      setConversations((prev) => prev.map((row) => (row.id === conversation.id ? { ...row, title: nextTitle } : row)))
+      cancelRename()
+      await reloadConversations(userId)
+      showToast("success", "เปลี่ยนชื่อการสนทนาสำเร็จ")
+    } catch (renameError) {
+      const message = renameError instanceof Error ? renameError.message : "ไม่สามารถเปลี่ยนชื่อการสนทนาได้"
+      showToast("error", message)
+    }
+  }
+
+  async function clearChat() {
     setMessages([])
     setQuestion("")
     setError(null)
     setLastQuestion("")
+
+    if (conversationId) {
+      try {
+        await clearConversation(conversationId)
+      } catch {
+        showToast("error", "ล้างข้อมูลบนคลาวด์ล้มเหลว ล้างเฉพาะข้อมูลในอุปกรณ์")
+      }
+    }
+  }
+
+  function focusSidebarSearch() {
+    setSidebarVisible(true)
+    window.setTimeout(() => {
+      sidebarSearchRef.current?.focus()
+    }, 0)
+  }
+
+  if (booting) {
+    return (
+      <ChatShell>
+        <p className="chat-status">กำลังเตรียมพร้อมระบบ...</p>
+      </ChatShell>
+    )
   }
 
   return (
     <ChatShell>
-      <header className="chat-header">
-        <div className="chat-header-top">
-          <p className="chat-kicker">RAG UPCHAT</p>
-          <a className="admin-link" href="/admin">
-            Admin
-          </a>
-        </div>
-        <h1>Contextual AI Assistant</h1>
-        <p className="chat-subtitle">Fast answers from vector search + Gemini. Built for real conversations.</p>
-      </header>
+      <div className={`chat-workspace ${sidebarVisible ? "sidebar-open" : ""}`}>
+        <aside className="chat-sidebar">
+          <div className="chat-sidebar-brand">
+            <p>ประวัติการสนทนา</p>
+          </div>
 
-      <MessageList messages={messages} />
+          {!userId ? (
+            <p className="chat-status sidebar-status">โหมดผู้เยี่ยมชม: เข้าสู่ระบบเพื่อดูประวัติการสนทนา</p>
+          ) : loadingConversations ? (
+            <div className="sidebar-skeleton">
+              <span />
+              <span />
+              <span />
+            </div>
+          ) : conversations.length === 0 ? (
+            <p className="chat-status sidebar-status">ยังไม่มีประวัติการสนทนา</p>
+          ) : (
+            <ul className="conversation-list">
+              <li>
+                <input
+                  type="search"
+                  className="sidebar-search"
+                  placeholder="ค้นหาการสนทนา..."
+                  value={sidebarQuery}
+                  ref={sidebarSearchRef}
+                  onChange={(event) => setSidebarQuery(event.target.value)}
+                />
+              </li>
+              {orderedConversations.length === 0 ? (
+                <li>
+                  <p className="chat-status sidebar-status">ไม่พบการสนทนาที่ค้นหา</p>
+                </li>
+              ) : null}
+              {orderedConversations.map((item) => (
+                <li key={item.id}>
+                  {renamingConversationId === item.id ? (
+                    <div className="conversation-rename">
+                      <input
+                        type="text"
+                        className="sidebar-search"
+                        value={renamingTitle}
+                        onChange={(event) => setRenamingTitle(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault()
+                            void saveRename(item)
+                          }
 
-      <div className="chat-toolbar">
-        <ChatStatus isLoading={isLoading} error={error} />
-        <div className="chat-actions">
-          {error && lastQuestion ? (
-            <button type="button" data-testid="retry-button" className="ghost-button" onClick={() => ask(lastQuestion)}>
-              Retry
-            </button>
+                          if (event.key === "Escape") {
+                            event.preventDefault()
+                            cancelRename()
+                          }
+                        }}
+                        autoFocus
+                      />
+                      <div className="conversation-row-actions">
+                        <button type="button" className="conversation-action" onClick={() => void saveRename(item)}>
+                          บันทึก
+                        </button>
+                        <button type="button" className="conversation-action" onClick={cancelRename}>
+                          ยกเลิก
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        className={`conversation-item ${conversationId === item.id ? "active" : ""}`}
+                        onClick={() => openConversation(item.id)}
+                        onDoubleClick={() => startRename(item)}
+                      >
+                        <span style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: pinnedConversationSet.has(item.id) ? 500 : 400 }}>
+                          {pinnedConversationSet.has(item.id) && <Pin size={12} color="var(--accent)" />}
+                          {item.title}
+                        </span>
+                        <time>{new Date(item.updatedAt).toLocaleString("th-TH", { month: "short", day: "numeric", year: "numeric" })}</time>
+                      </button>
+                      <div className="conversation-row-actions">
+                        <button type="button" className="conversation-action" onClick={() => handleTogglePin(item.id)} title={pinnedConversationSet.has(item.id) ? "เลิกปักหมุด" : "ปักหมุด"}>
+                          {pinnedConversationSet.has(item.id) ? <PinOff size={14} /> : <Pin size={14} />}
+                        </button>
+                        <button type="button" className="conversation-action" onClick={() => startRename(item)} title="เปลี่ยนชื่อ">
+                          <Edit2 size={14} />
+                        </button>
+                        <button type="button" className="conversation-delete conversation-delete-wide" onClick={() => handleDeleteConversation(item)} title="ลบการสนทนา">
+                          <Trash2 size={14} />
+                          ลบ
+                        </button>
+                      </div>
+                      {pinnedConversationSet.has(item.id) ? (
+                        <div className="conversation-reorder">
+                          <button
+                            type="button"
+                            className="conversation-action"
+                            onClick={() => handleMovePinned(item.id, "up")}
+                            disabled={pinnedConversationIds.indexOf(item.id) <= 0}
+                            title="เลื่อนขึ้น"
+                          >
+                            <ArrowUp size={14} />
+                          </button>
+                          <button
+                            type="button"
+                            className="conversation-action"
+                            onClick={() => handleMovePinned(item.id, "down")}
+                            disabled={pinnedConversationIds.indexOf(item.id) === pinnedConversationIds.length - 1}
+                            title="เลื่อนลง"
+                          >
+                            <ArrowDown size={14} />
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </aside>
+
+        <div className="chat-main">
+          <header className="chat-header">
+            <div className="chat-header-top">
+              <div className="chat-brand">
+                <div className="brand-crest" aria-hidden="true">
+                  {hasBrandLogo ? (
+                    <Image
+                      src="/logo/up-logo.svg"
+                      alt=""
+                      className="brand-logo-image"
+                      width={44}
+                      height={44}
+                      onError={() => setHasBrandLogo(false)}
+                    />
+                  ) : (
+                    <span>มพ</span>
+                  )}
+                </div>
+                <div className="brand-copy">
+                  <p className="chat-kicker">มหาวิทยาลัยพะเยา</p>
+                  <h1>ผู้ช่วย AI มหาวิทยาลัยพะเยา</h1>
+                  <p className="chat-subtitle">ตอบคำถามด้านการศึกษา กฎระเบียบ และข้อมูลภายในมหาวิทยาลัยจากแหล่งข้อมูลที่กำหนด</p>
+                </div>
+              </div>
+              <div className="header-meta">
+                <a className="admin-link" href="/admin">
+                  <Settings size={14} />
+                  ผู้ดูแลระบบ
+                </a>
+                {userEmail ? (
+                  <button className="ghost-button" type="button" onClick={handleLogout}>
+                    <LogOut size={14} />
+                    ออกจากระบบ
+                  </button>
+                ) : null}
+              </div>
+            </div>
+            <p className="chat-note">รองรับทั้งโหมดผู้เยี่ยมชมและสมาชิก เพื่อเก็บประวัติการสนทนาและซิงค์ข้ามอุปกรณ์อย่างต่อเนื่อง</p>
+          </header>
+
+          {!userEmail ? (
+            <section className="auth-strip auth-strip-links">
+              <p className="auth-cta-text">ต้องการบันทึกประวัติและซิงค์ข้ามอุปกรณ์?</p>
+              <Link href="/login" className="auth-link-button">
+                เข้าสู่ระบบ
+              </Link>
+              <Link href="/signup" className="ghost-button">
+                สมัครสมาชิก
+              </Link>
+            </section>
           ) : null}
-          <button
-            type="button"
-            data-testid="clear-chat-button"
-            className="ghost-button"
-            onClick={clearChat}
-            disabled={messages.length === 0 && !question && !error}
-          >
-            Clear chat
-          </button>
+
+          <section className="quick-questions" aria-label="คำถามที่พบบ่อย">
+            {quickQuestions.slice(0, 5).map((item, index) => (
+              <button key={`${item}-${index}`} type="button" className="ghost-button" onClick={() => setQuestion(item)}>
+                {item}
+              </button>
+            ))}
+          </section>
+
+          <MessageList messages={messages} />
+
+          <div className="chat-toolbar">
+            <div>
+              <ChatStatus isLoading={isLoading} error={error} />
+              {toast ? <AppToast kind={toast.kind} text={toast.text} /> : null}
+            </div>
+            <div className="chat-actions">
+              {error && lastQuestion ? (
+                <button type="button" data-testid="retry-button" className="ghost-button" onClick={() => ask(lastQuestion)}>
+                  <RotateCcw size={14} />
+                  ลองใหม่
+                </button>
+              ) : null}
+              <button
+                type="button"
+                data-testid="clear-chat-button"
+                className="ghost-button"
+                onClick={clearChat}
+                disabled={messages.length === 0 && !question && !error}
+              >
+                <Eraser size={14} />
+                ล้างแชท
+              </button>
+            </div>
+          </div>
+
+          <ChatComposer value={question} disabled={isLoading} onChange={setQuestion} onSubmit={() => ask()} />
         </div>
       </div>
 
-      <ChatComposer value={question} disabled={isLoading} onChange={setQuestion} onSubmit={() => ask()} />
+      <aside className="sidebar-dock" aria-label="แถบเครื่องมือการสนทนา">
+        <div className="dock-top">
+          <span className="dock-logo-mark" aria-hidden="true">
+            <Image src="/logo/up-logo.svg" alt="" width={24} height={24} />
+          </span>
+        </div>
+        <div className="dock-main">
+          <button
+            type="button"
+            className="dock-button"
+            title={sidebarVisible ? "ซ่อนประวัติ" : "แสดงประวัติ"}
+            aria-label={sidebarVisible ? "ซ่อนประวัติ" : "แสดงประวัติ"}
+            onClick={() => setSidebarVisible((prev) => !prev)}
+          >
+            {sidebarVisible ? <PanelLeftClose size={18} /> : <PanelLeft size={18} />}
+          </button>
+          <button
+            type="button"
+            className="dock-button"
+            title="เริ่มแชทใหม่"
+            aria-label="เริ่มแชทใหม่"
+            onClick={() => void handleNewConversation()}
+          >
+            <Plus size={18} />
+          </button>
+          <button
+            type="button"
+            className="dock-button"
+            title="ค้นหาในประวัติ"
+            aria-label="ค้นหาในประวัติ"
+            onClick={focusSidebarSearch}
+          >
+            <Search size={18} />
+          </button>
+        </div>
+        <div className="dock-bottom">
+          <span className="dock-avatar">{userEmail ? userEmail.slice(0, 1).toUpperCase() : "UP"}</span>
+        </div>
+      </aside>
     </ChatShell>
   )
 }

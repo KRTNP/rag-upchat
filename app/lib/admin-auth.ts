@@ -1,25 +1,49 @@
-import { getAdminSessionFromRequest } from "@/app/lib/admin-session"
+import { createClient } from "@supabase/supabase-js"
 
-export function assertAdminRequest(req: Request) {
-  const session = getAdminSessionFromRequest(req)
-  if (session?.role === "admin") {
-    return true
+function getAdminAuthClient() {
+  const url = process.env.SUPABASE_URL
+  const anonKey = process.env.SUPABASE_ANON_KEY
+
+  if (!url || !anonKey) {
+    throw new Error("Missing SUPABASE_URL or SUPABASE_ANON_KEY")
   }
 
-  const configuredKey = process.env.ADMIN_API_KEY
+  return createClient(url, anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
+    }
+  })
+}
 
-  if (!configuredKey) {
-    return false
-  }
-
-  const headerKey = req.headers.get("x-admin-key")
+export async function assertAdminRequest(req: Request) {
   const authHeader = req.headers.get("authorization")
-  const bearer = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null
-  const provided = headerKey ?? bearer
+  const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null
 
-  if (!provided || provided !== configuredKey) {
+  if (!token) {
     return false
   }
 
-  return true
+  try {
+    const supabase = getAdminAuthClient()
+    const { data, error } = await supabase.auth.getUser(token)
+
+    if (error || !data.user) {
+      return false
+    }
+
+    const allowedRaw = process.env.ADMIN_ALLOWED_EMAILS ?? ""
+    const allowedEmails = allowedRaw
+      .split(",")
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean)
+
+    if (allowedEmails.length === 0) {
+      return true
+    }
+
+    return allowedEmails.includes((data.user.email ?? "").toLowerCase())
+  } catch {
+    return false
+  }
 }

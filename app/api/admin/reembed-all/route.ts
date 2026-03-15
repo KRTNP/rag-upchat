@@ -2,7 +2,7 @@ import { assertAdminRequest } from "@/app/lib/admin-auth"
 import { reembedAllDocuments } from "@/app/lib/document-admin"
 
 export async function POST(req: Request) {
-  if (!assertAdminRequest(req)) {
+  if (!(await assertAdminRequest(req))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
   }
 

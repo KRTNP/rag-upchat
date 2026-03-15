@@ -1,4 +1,5 @@
 import type { KeyboardEvent } from "react"
+import { SendHorizonal } from "lucide-react"
 
 type ChatComposerProps = {
   value: string
@@ -18,13 +19,13 @@ export default function ChatComposer({ value, disabled, onChange, onSubmit }: Ch
   return (
     <div className="chat-composer-wrap">
       <label className="sr-only" htmlFor="chat-input">
-        Message input
+        ช่องพิมพ์ข้อความ
       </label>
       <textarea
         id="chat-input"
         data-testid="chat-input"
         className="chat-composer"
-        placeholder="Ask anything..."
+        placeholder="พิมพ์คำถามของคุณที่นี่..."
         value={value}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={handleKeyDown}
@@ -36,8 +37,9 @@ export default function ChatComposer({ value, disabled, onChange, onSubmit }: Ch
         className="chat-send"
         onClick={onSubmit}
         disabled={disabled}
+        aria-label="ส่งข้อความ"
       >
-        Send
+        <SendHorizonal size={20} />
       </button>
     </div>
   )

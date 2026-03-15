@@ -6,7 +6,7 @@ type Params = {
 }
 
 export async function POST(req: Request, { params }: Params) {
-  if (!assertAdminRequest(req)) {
+  if (!(await assertAdminRequest(req))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
   }
 

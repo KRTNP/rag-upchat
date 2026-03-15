@@ -1,43 +1,56 @@
 import { afterEach, describe, expect, test, vi } from "vitest"
 import { assertAdminRequest } from "@/app/lib/admin-auth"
-import { createAdminSessionToken } from "@/app/lib/admin-session"
+
+const getUserMock = vi.fn()
+
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: () => ({
+    auth: {
+      getUser: getUserMock
+    }
+  })
+}))
 
 describe("assertAdminRequest", () => {
   afterEach(() => {
     vi.unstubAllEnvs()
+    getUserMock.mockReset()
   })
 
-  test("returns true for matching x-admin-key", () => {
-    vi.stubEnv("ADMIN_API_KEY", "secret-1")
+  test("returns false without bearer token", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://example.supabase.co")
+    vi.stubEnv("SUPABASE_ANON_KEY", "anon-key")
+    const req = new Request("http://localhost")
+
+    await expect(assertAdminRequest(req)).resolves.toBe(false)
+  })
+
+  test("returns true for authenticated user", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://example.supabase.co")
+    vi.stubEnv("SUPABASE_ANON_KEY", "anon-key")
+    getUserMock.mockResolvedValue({ data: { user: { email: "admin@example.com" } }, error: null })
+
     const req = new Request("http://localhost", {
       headers: {
-        "x-admin-key": "secret-1"
+        authorization: "Bearer token-1"
       }
     })
 
-    expect(assertAdminRequest(req)).toBe(true)
+    await expect(assertAdminRequest(req)).resolves.toBe(true)
   })
 
-  test("returns false when key mismatch", () => {
-    vi.stubEnv("ADMIN_API_KEY", "secret-1")
+  test("respects ADMIN_ALLOWED_EMAILS when configured", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://example.supabase.co")
+    vi.stubEnv("SUPABASE_ANON_KEY", "anon-key")
+    vi.stubEnv("ADMIN_ALLOWED_EMAILS", "admin@example.com")
+    getUserMock.mockResolvedValue({ data: { user: { email: "other@example.com" } }, error: null })
+
     const req = new Request("http://localhost", {
       headers: {
-        "x-admin-key": "bad"
+        authorization: "Bearer token-1"
       }
     })
 
-    expect(assertAdminRequest(req)).toBe(false)
-  })
-
-  test("returns true for valid admin session cookie", () => {
-    vi.stubEnv("ADMIN_SESSION_SECRET", "session-secret")
-    const token = createAdminSessionToken()
-    const req = new Request("http://localhost", {
-      headers: {
-        cookie: `rag_admin_session=${token}`
-      }
-    })
-
-    expect(assertAdminRequest(req)).toBe(true)
+    await expect(assertAdminRequest(req)).resolves.toBe(false)
   })
 })

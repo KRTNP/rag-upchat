@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, type CSSProperties } from "react"
+import { Copy, Check } from "lucide-react"
 import MarkdownContent from "@/app/components/markdown-content"
 import type { ChatMessage } from "@/app/lib/chat-types"
 
@@ -19,8 +20,8 @@ export default function MessageList({ messages }: MessageListProps) {
   if (messages.length === 0) {
     return (
       <div className="message-list empty-state" aria-live="polite">
-        <h2>Start a smart conversation</h2>
-        <p>Ask about กยศ or chat naturally. Your context-aware assistant is ready.</p>
+        <h2>เริ่มต้นการสนทนา</h2>
+        <p>สอบถามข้อมูล กยศ. หรือพูดคุยเรื่องทั่วไป ผู้ช่วย AI ของมหาวิทยาลัยพะเยาพร้อมให้บริการคุณแล้ว</p>
       </div>
     )
   }
@@ -53,8 +54,14 @@ export default function MessageList({ messages }: MessageListProps) {
                 })}
               </time>
               {message.role === "bot" ? (
-                <button type="button" className="copy-button" onClick={() => copyMessage(message)} aria-label="Copy response">
-                  {copiedId === message.id ? "Copied" : "Copy"}
+                <button
+                  type="button"
+                  className="copy-button"
+                  onClick={() => copyMessage(message)}
+                  aria-label="คัดลอกข้อความ"
+                  title="คัดลอกข้อความ"
+                >
+                  {copiedId === message.id ? <Check size={14} color="var(--accent)" /> : <Copy size={14} />}
                 </button>
               ) : null}
             </span>

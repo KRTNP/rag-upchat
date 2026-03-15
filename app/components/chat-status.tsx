@@ -15,7 +15,7 @@ export default function ChatStatus({ isLoading, error }: ChatStatusProps) {
   if (isLoading) {
     return (
       <div className="chat-status status-loading" data-testid="chat-status" aria-live="polite">
-        <span>Assistant is thinking</span>
+        <span>ระบบกำลังประมวลผล</span>
         <span className="typing-dots" data-testid="typing-dots" aria-hidden="true">
           <i />
           <i />
@@ -27,7 +27,7 @@ export default function ChatStatus({ isLoading, error }: ChatStatusProps) {
 
   return (
     <p className="chat-status" aria-live="polite">
-      Ready
+      พร้อมใช้งาน
     </p>
   )
 }

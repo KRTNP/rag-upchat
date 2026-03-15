@@ -11,6 +11,6 @@ test("admin page renders login form", async ({ page }) => {
   await page.goto("/admin")
 
   await expect(page.getByRole("heading", { name: "Admin Access" })).toBeVisible()
-  await expect(page.getByPlaceholder("ADMIN_USERNAME")).toBeVisible()
-  await expect(page.getByPlaceholder("ADMIN_PASSWORD")).toBeVisible()
+  await expect(page.getByPlaceholder("Email")).toBeVisible()
+  await expect(page.getByPlaceholder("Password")).toBeVisible()
 })

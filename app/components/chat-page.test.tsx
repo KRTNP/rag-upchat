@@ -20,12 +20,24 @@ describe("Chat page", () => {
     window.localStorage.clear()
   })
 
+  test("renders university brand heading and service subtitle", async () => {
+    mockFetchResponse({ answer: "พร้อมช่วย" })
+
+    render(<Page />)
+
+    expect(await screen.findByText("มหาวิทยาลัยพะเยา")).toBeInTheDocument()
+    expect(screen.getByRole("heading", { level: 1, name: "ผู้ช่วย AI มหาวิทยาลัยพะเยา" })).toBeInTheDocument()
+    expect(
+      screen.getByText("ตอบคำถามด้านการศึกษา กฎระเบียบ และข้อมูลภายในมหาวิทยาลัยจากแหล่งข้อมูลที่กำหนด")
+    ).toBeInTheDocument()
+  })
+
   test("submits with Enter and appends user + bot messages", async () => {
     const fetchMock = mockFetchResponse({ answer: "ตอบแล้ว" })
 
     render(<Page />)
 
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     fireEvent.change(input, { target: { value: "สวัสดี" } })
     fireEvent.keyDown(input, { key: "Enter", code: "Enter" })
 
@@ -50,14 +62,14 @@ describe("Chat page", () => {
 
     render(<Page />)
 
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     const sendButton = screen.getByTestId("send-button")
 
     await userEvent.type(input, "ทดสอบ")
     await userEvent.click(sendButton)
 
     expect(sendButton).toBeDisabled()
-    expect(screen.getByTestId("chat-status")).toHaveTextContent("Assistant is thinking")
+    expect(screen.getByTestId("chat-status")).toHaveTextContent("ระบบกำลังประมวลผล")
 
     resolveFetch?.({
       ok: true,
@@ -82,13 +94,13 @@ describe("Chat page", () => {
 
     render(<Page />)
 
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     const sendButton = screen.getByTestId("send-button")
 
     await userEvent.type(input, "มีใครอยู่ไหม")
     await userEvent.click(sendButton)
 
-    expect(await screen.findByText("Unable to get a response. Please try again.")).toBeInTheDocument()
+    expect(await screen.findByText("ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง")).toBeInTheDocument()
 
     const retryButton = screen.getByTestId("retry-button")
     await userEvent.click(retryButton)
@@ -105,7 +117,7 @@ describe("Chat page", () => {
 
     render(<Page />)
 
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     const sendButton = screen.getByTestId("send-button")
 
     await userEvent.type(input, "ข้อความแรก")
@@ -124,7 +136,7 @@ describe("Chat page", () => {
     mockFetchResponse({ answer: "ประวัติถูกบันทึก" })
 
     const { unmount } = render(<Page />)
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     const sendButton = screen.getByTestId("send-button")
 
     await userEvent.type(input, "บันทึกหน่อย")
@@ -147,7 +159,7 @@ describe("Chat page", () => {
     mockFetchResponse({ answer: "**ตัวหนา** และ [ลิงก์](https://example.com)" })
 
     render(<Page />)
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     const sendButton = screen.getByTestId("send-button")
 
     await userEvent.type(input, "แสดง markdown")
@@ -164,7 +176,7 @@ describe("Chat page", () => {
     mockFetchResponse({ answer: "มีเวลาแนบ" })
 
     render(<Page />)
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     const sendButton = screen.getByTestId("send-button")
 
     await userEvent.type(input, "ขอเวลา")
@@ -183,14 +195,14 @@ describe("Chat page", () => {
     mockFetchResponse({ answer: "ข้อความสำหรับคัดลอก" })
 
     render(<Page />)
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     const sendButton = screen.getByTestId("send-button")
 
     await userEvent.type(input, "ขอคัดลอก")
     await userEvent.click(sendButton)
     await screen.findByText("ข้อความสำหรับคัดลอก")
 
-    const copyButton = screen.getByRole("button", { name: "Copy response" })
+    const copyButton = screen.getByRole("button", { name: "คัดลอกข้อความ" })
     await userEvent.click(copyButton)
 
     expect(writeText).toHaveBeenCalledWith("ข้อความสำหรับคัดลอก")
@@ -209,7 +221,7 @@ describe("Chat page", () => {
     )
 
     render(<Page />)
-    const input = screen.getByTestId("chat-input")
+    const input = await screen.findByTestId("chat-input")
     const sendButton = screen.getByTestId("send-button")
 
     await userEvent.type(input, "รอหน่อย")

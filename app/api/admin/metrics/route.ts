@@ -2,7 +2,7 @@ import { assertAdminRequest } from "@/app/lib/admin-auth"
 import { getSupabaseAdminClient } from "@/app/lib/supabase-admin"
 
 export async function GET(req: Request) {
-  if (!assertAdminRequest(req)) {
+  if (!(await assertAdminRequest(req))) {
     return Response.json({ error: "Unauthorized" }, { status: 401 })
   }
 

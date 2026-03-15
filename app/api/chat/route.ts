@@ -256,6 +256,7 @@ ${userQuestion}
   const errors: unknown[] = []
   let geminiFailed = false
   let geminiSawRateLimit = false
+  let geminiRetryAfterSec: number | null = null
   const geminiTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 6000)
   const llmMaxLatencyMs = Number(process.env.LLM_MAX_LATENCY_MS ?? 8000)
   const llmPhaseStartedAt = Date.now()
@@ -283,6 +284,7 @@ ${userQuestion}
           geminiSawRateLimit = geminiSawRateLimit || rateLimited
           if (rateLimited) {
             const retryAfterSec = parseRetryAfterSeconds(err) ?? 30
+            geminiRetryAfterSec = retryAfterSec
             geminiBlockedUntilMs = Date.now() + retryAfterSec * 1000
           }
           errors.push(err)
@@ -292,7 +294,8 @@ ${userQuestion}
     }
   }
 
-  const shouldUseZaiFallback = Boolean(zaiApiKey && geminiApiKey && geminiFailed && geminiSawRateLimit)
+  const shortRetryRateLimit = Boolean(geminiRetryAfterSec !== null && geminiRetryAfterSec <= 3)
+  const shouldUseZaiFallback = Boolean(zaiApiKey && geminiApiKey && geminiFailed && geminiSawRateLimit && !shortRetryRateLimit)
   const shouldUseZaiPrimary = Boolean(zaiApiKey && !geminiApiKey)
 
   if ((shouldUseZaiFallback || shouldUseZaiPrimary) && zaiApiKey) {
@@ -338,7 +341,11 @@ ${userQuestion}
     console.error("all model attempts failed", errors)
   }
 
-  const finalFallbackReason = quotaLikeFailure ? "all-models-failed-after-rate-limit" : "all-models-failed-non-rate-limit"
+  const finalFallbackReason = shortRetryRateLimit
+    ? "gemini-rate-limit-short-retry"
+    : quotaLikeFailure
+      ? "all-models-failed-after-rate-limit"
+      : "all-models-failed-non-rate-limit"
   const fallbackPayload: ChatApiSuccessPayload = {
     answer: fallbackAnswer,
     contextMatches: docs.length,

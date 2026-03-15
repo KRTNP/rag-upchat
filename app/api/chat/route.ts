@@ -18,7 +18,7 @@ type ChatTurn = {
   role: "user" | "bot"
   text: string
 }
-type AnswerMode = "strict" | "chat"
+type AnswerMode = "strict" | "balanced" | "chat"
 
 type ChatApiSuccessPayload = {
   answer: string
@@ -130,6 +130,32 @@ function extractAnswerFromContent(content: string | undefined) {
   return content.slice(idx + marker.length).trim()
 }
 
+function makeDirectAnswerNatural(question: string, answer: string) {
+  const clean = answer.trim()
+  if (!clean) return clean
+
+  const academicCalendarLike =
+    clean.includes("/") && /ภาคการศึกษาต้น|ภาคการศึกษาปลาย|ภาคฤดูร้อน/.test(clean)
+
+  if (academicCalendarLike) {
+    const parts = clean
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const normalized = part.replace(/\s+/g, " ").trim()
+        return normalized.includes(":") ? normalized : normalized.replace(/ภาคการศึกษา/g, "ภาค")
+      })
+    return `ได้เลย สรุปกำหนดการให้แบบสั้น ๆ:\n- ${parts.join("\n- ")}`
+  }
+
+  if (question.includes("วันไหน") || question.includes("เมื่อไหร่") || question.includes("เดดไลน์")) {
+    return `ได้เลย: ${clean}`
+  }
+
+  return clean
+}
+
 function extractQuestionFromContent(content: string | undefined) {
   if (!content) return ""
   const q = content.split("คำตอบ:")[0] ?? ""
@@ -233,6 +259,20 @@ function isFollowUpQuestion(text: string) {
   return /^(แล้ว|งั้น|อันนี้|เรื่องนี้|มัน|แล้วเรื่อง|แล้วถ้า)/.test(q)
 }
 
+function isCautionIntent(text: string) {
+  const q = text.trim().toLowerCase()
+  return /ต้องระวัง|ควรระวัง|ข้อควรระวัง|เตือน|พลาดอะไร|มีอะไรต้องรู้/.test(q)
+}
+
+function getLatestBotAnswer(history: ChatTurn[]) {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i]?.role === "bot" && history[i]?.text?.trim()) {
+      return history[i].text.trim()
+    }
+  }
+  return ""
+}
+
 function buildRetrievalQuery(userQuestion: string, history: ChatTurn[]) {
   const latestUserTurns = history
     .filter((turn) => turn.role === "user")
@@ -254,7 +294,7 @@ export async function POST(req: Request) {
   const safeHistory = history ?? []
   const retrievalQuery = buildRetrievalQuery(userQuestion, safeHistory)
   const chatScope = req.headers.get("x-chat-scope") === "user" ? "user" : "guest"
-  const answerMode: AnswerMode = mode === "chat" ? "chat" : "strict"
+  const answerMode: AnswerMode = mode === "chat" ? "chat" : mode === "strict" ? "strict" : "balanced"
 
   if (!userQuestion) {
     return Response.json({ error: "Missing question", fallbackReason: "invalid-request" }, { status: 400 })
@@ -344,7 +384,7 @@ export async function POST(req: Request) {
   if (docs.length === 0) {
     return Response.json({
       answer:
-        "ขอบคุณที่ถามนะครับ ตอนนี้ผมยังค้นไม่เจอข้อมูลที่ตรงคำถามนี้ในคลังความรู้แบบชัดเจน\nลองระบุเพิ่มอีกนิดได้ไหม เช่น ประเภทผู้กู้ (รายใหม่/รายเก่า), ภาคเรียน, หรือชื่อแบบฟอร์มที่เกี่ยวข้อง แล้วผมจะช่วยไล่ให้ตรงจุดทันที",
+        "ผมหาข้อมูลที่ตรงเป๊ะในคลังความรู้ยังไม่เจอครับ แต่ช่วยต่อได้แน่นอน\nลองพิมพ์เพิ่มอีกนิดแบบนี้ได้เลย: ประเภทผู้กู้ (รายใหม่/รายเก่า), ภาคเรียน, หรือชื่อแบบฟอร์ม แล้วผมจะสรุปให้ตรงประเด็นทันที",
       contextMatches: 0,
       fallbackUsed: true,
       fallbackReason: "no-context-match",
@@ -377,16 +417,35 @@ export async function POST(req: Request) {
   )
 
   if (answerMode === "strict" && topSimilarity < strictMinSimilarity) {
+    const lastBotAnswer = getLatestBotAnswer(safeHistory)
+    const followUpLike = isFollowUpQuestion(userQuestion)
+    const cautionLike = isCautionIntent(userQuestion)
+    if (followUpLike && cautionLike) {
+      const base = directAnswer || lastBotAnswer
+      if (base) {
+        return Response.json({
+          answer: `จากข้อมูลที่คุยกันเมื่อกี้ สิ่งที่ควรระวังคืออย่าให้เกินกำหนดเวลา และตรวจรายละเอียดเอกสารให้ครบก่อนส่ง\nข้อมูลอ้างอิงที่เกี่ยวข้อง: ${base}`,
+          contextMatches: docs.length,
+          fallbackUsed: true,
+          fallbackReason: "follow-up-caution-guidance",
+          model: "context-fallback",
+          cacheHit: false
+        })
+      }
+    }
+
     const suggestions = sortedDocs
       .slice(0, 3)
       .map((doc) => extractQuestionFromContent(doc.content))
       .filter(Boolean)
+    const tentative = directAnswer || extractAnswerFromContent(sortedDocs[0]?.content)
+    const tentativeText = tentative ? `พอมีข้อมูลที่น่าจะใกล้สุดคือ: ${tentative}` : ""
     const suggestionText = suggestions.length
       ? `\nหัวข้อที่ใกล้เคียงที่ผมเจอ:\n- ${suggestions.join("\n- ")}`
       : ""
 
     return Response.json({
-      answer: `ผมเจอข้อมูลใกล้เคียง แต่ยังไม่มั่นใจพอว่าจะตรงคำถามนี้แบบ 100% ครับ\nช่วยระบุเพิ่มอีกนิด เช่น ภาคเรียน/ประเภทผู้กู้/ชื่อแบบฟอร์ม แล้วผมจะตอบให้ตรงที่สุด${suggestionText}`,
+      answer: `ผมพอเจอข้อมูลที่ใกล้เคียงครับ แต่ยังอยากเช็กให้แม่นก่อนตอบฟันธง\n${tentativeText}\nถ้าบอกเพิ่มอีกนิด (ภาคเรียน/ประเภทผู้กู้/ชื่อแบบฟอร์ม) ผมจะตอบให้ชัดขึ้นทันที${suggestionText}`,
       contextMatches: docs.length,
       fallbackUsed: true,
       fallbackReason: "low-confidence-context",
@@ -395,9 +454,10 @@ export async function POST(req: Request) {
     })
   }
 
-  if (answerMode === "strict" && topDoc && topSimilarity >= directAnswerThreshold && directAnswer && canLockAnswer) {
+  if ((answerMode === "strict" || answerMode === "balanced") && topDoc && topSimilarity >= directAnswerThreshold && directAnswer && canLockAnswer) {
+    const naturalDirectAnswer = makeDirectAnswerNatural(userQuestion, directAnswer)
     const payload: ChatApiSuccessPayload = {
-      answer: directAnswer,
+      answer: naturalDirectAnswer,
       contextMatches: docs.length,
       fallbackUsed: false,
       fallbackReason: "direct-rag-answer",
@@ -413,7 +473,7 @@ export async function POST(req: Request) {
   if (enableOutOfScopeGuardrail && isOutOfScopeQuestion(userQuestion, maxSimilarity)) {
     return Response.json({
       answer:
-        "ขอโทษด้วยครับ คำถามนี้อยู่นอกขอบเขตที่ระบบนี้ดูแลอยู่\nผมช่วยได้ดีที่สุดในเรื่อง กยศ / การกู้ยืม / ระเบียบนิสิต / ข้อมูลภายในมหาวิทยาลัย ถ้าต้องการ ผมช่วยแตกคำถามใหม่ให้อยู่ในขอบเขตนี้ได้",
+        "คำถามนี้อาจเลยขอบเขตที่ระบบนี้ดูแลอยู่ครับ แต่ผมยังช่วยปรับคำถามให้ใกล้กับข้อมูลที่มีได้\nระบบนี้ถนัดเรื่อง กยศ / การกู้ยืม / ระเบียบนิสิต / ข้อมูลภายในมหาวิทยาลัย",
       contextMatches: docs.length,
       fallbackUsed: true,
       fallbackReason: "out-of-scope",
@@ -440,11 +500,12 @@ ${outOfScopeRule}
 - โทนการตอบต้องเป็นมิตร สุภาพ และช่วยผู้ใช้ไปต่อได้เสมอ
 - หลีกเลี่ยงประโยคปัดสั้นๆ เช่น "ไม่มีข้อมูลที่ match ได้เลย"
 - ถ้าข้อมูลไม่พอ ให้บอกว่าขาดอะไร และยกตัวอย่างสิ่งที่ผู้ใช้ควรระบุเพิ่ม
+- ถ้าไม่มั่นใจ ให้เริ่มจากสิ่งที่ "น่าจะใช่ที่สุด" แบบระบุว่าเป็นข้อมูลเบื้องต้น แล้วค่อยชวนผู้ใช้ระบุเพิ่มเพื่อยืนยัน
 - ถ้าถามเกี่ยวกับ กยศ ให้ใช้ข้อมูลด้านล่างเป็นหลัก และตอบให้ตรงข้อเท็จจริงที่สุด
 - ถ้าในข้อมูลอ้างอิงมีคำตอบตรง ให้ตอบจากข้อมูลอ้างอิงก่อนเสมอ และห้ามแต่งข้อมูลเพิ่ม
 - ถ้ามีคำตอบอยู่ในข้อมูลอ้างอิง ให้ตอบเฉพาะเนื้อคำตอบสั้นๆ โดยไม่ต้องทักทาย/ไม่ต้องเกริ่น
 - ถ้าข้อมูลอ้างอิงมีหลายกรณี (เช่น หลายภาค/หลายประเภท) ให้สรุปทุกกรณีแบบเป็นรายการในคำตอบเดียว ห้ามถามกลับก่อน
-- โหมดคำตอบตอนนี้คือ: ${answerMode} (strict = ตอบสั้นตรงข้อมูล, chat = อธิบายเพิ่มได้)
+- โหมดคำตอบตอนนี้คือ: ${answerMode} (strict = เข้มที่สุด, balanced = ตรงข้อมูลแต่เป็นธรรมชาติ, chat = อธิบายเพิ่มได้)
 
 ข้อมูลอ้างอิง:
 ${context || "ไม่มีข้อมูลอ้างอิงที่ match ได้"}
@@ -469,12 +530,15 @@ ${userQuestion}
     for (const model of geminiModels) {
       try {
         const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), geminiTimeoutMs, `gemini/${model}`)
-        const finalAnswer = answerMode === "strict" && canLockAnswer ? directAnswer : answer
+        const finalAnswer =
+          (answerMode === "strict" || answerMode === "balanced") && canLockAnswer
+            ? makeDirectAnswerNatural(userQuestion, directAnswer)
+            : answer
         const payload: ChatApiSuccessPayload = {
           answer: finalAnswer,
           contextMatches: docs.length,
           fallbackUsed: false,
-          fallbackReason: answerMode === "strict" && canLockAnswer ? "locked-rag-answer" : "none",
+          fallbackReason: (answerMode === "strict" || answerMode === "balanced") && canLockAnswer ? "locked-rag-answer" : "none",
           model
         }
         if (cacheEnabled) {
@@ -497,13 +561,16 @@ ${userQuestion}
     try {
       // Give z.ai full timeout budget from config, independent of Gemini elapsed time.
       const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
-      const finalAnswer = answerMode === "strict" && canLockAnswer ? directAnswer : answer
+      const finalAnswer =
+        (answerMode === "strict" || answerMode === "balanced") && canLockAnswer
+          ? makeDirectAnswerNatural(userQuestion, directAnswer)
+          : answer
       const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-failed"
       const payload: ChatApiSuccessPayload = {
         answer: finalAnswer,
         contextMatches: docs.length,
         fallbackUsed: Boolean(geminiApiKey),
-        fallbackReason: answerMode === "strict" && canLockAnswer ? "locked-rag-answer" : fallbackReason,
+        fallbackReason: (answerMode === "strict" || answerMode === "balanced") && canLockAnswer ? "locked-rag-answer" : fallbackReason,
         model: "glm-4.7-flash"
       }
       if (cacheEnabled) {

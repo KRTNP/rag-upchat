@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import {
@@ -263,7 +263,7 @@ export default function Page() {
           "Content-Type": "application/json",
           "X-Chat-Scope": userId ? "user" : "guest"
         },
-        body: JSON.stringify({ question: prompt, history: compactHistory, mode: "strict" })
+        body: JSON.stringify({ question: prompt, history: compactHistory, mode: "balanced" })
       })
 
       if (!res.ok) {
@@ -496,6 +496,18 @@ export default function Page() {
     }, 0)
   }
 
+  function handleQuickWheel(event: WheelEvent<HTMLElement>) {
+    const container = quickQuestionsRef.current
+    if (!container) return
+
+    const mostlyVertical = Math.abs(event.deltaY) >= Math.abs(event.deltaX)
+    const canScrollHorizontally = container.scrollWidth > container.clientWidth
+    if (!mostlyVertical || !canScrollHorizontally) return
+
+    container.scrollLeft += event.deltaY
+    event.preventDefault()
+  }
+
   if (booting) {
     return (
       <ChatShell>
@@ -708,7 +720,6 @@ export default function Page() {
 
           <div className="quick-questions-panel">
             <div className="quick-questions-control">
-              <p className="quick-questions-label">พร้อมใช้งาน</p>
               <button
                 type="button"
                 className="quick-toggle-button"
@@ -730,6 +741,7 @@ export default function Page() {
                 onPointerUp={stopQuickPointerDrag}
                 onPointerCancel={stopQuickPointerDrag}
                 onPointerLeave={stopQuickPointerDrag}
+                onWheel={handleQuickWheel}
               >
                 {quickQuestions.slice(0, 5).map((item, index) => (
                   <button
@@ -737,10 +749,7 @@ export default function Page() {
                     type="button"
                     className="ghost-button"
                     disabled={isLoading}
-                    onClick={() => {
-                      if (isQuickDragging) return
-                      void ask(item)
-                    }}
+                    onClick={() => void ask(item)}
                   >
                     {item}
                   </button>

@@ -759,10 +759,6 @@ body {
   cursor: grabbing;
 }
 
-.quick-questions.is-dragging .ghost-button {
-  pointer-events: none;
-}
-
 .quick-questions .ghost-button {
   flex: 0 0 auto;
   border-radius: 999px;
@@ -781,7 +777,7 @@ body {
 
 .quick-questions-bottom {
   align-self: stretch;
-  margin-top: 0.2rem;
+  margin-top: 0;
   padding: 0.1rem 0 0.2rem;
 }
 
@@ -789,22 +785,15 @@ body {
   border: 1px solid #eadfce;
   border-radius: 12px;
   background: #fffdf8;
-  padding: 0.35rem 0.45rem 0.25rem;
+  padding: 0.32rem 0.42rem 0.22rem;
 }
 
 .quick-questions-control {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 0;
-}
-
-.quick-questions-label {
-  margin: 0;
-  font-size: 0.92rem;
-  color: #5d546e;
-  font-weight: 600;
 }
 
 .quick-toggle-button {

@@ -59,6 +59,10 @@ async function generateWithModel(apiKey: string, modelName: string, prompt: stri
 }
 
 async function generateWithZai(apiKey: string, modelName: string, prompt: string) {
+  const timeoutMs = Number(process.env.ZAI_MODEL_TIMEOUT_MS ?? 15_000)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
   const res = await fetch("https://api.z.ai/api/paas/v4/chat/completions", {
     method: "POST",
     headers: {
@@ -70,8 +74,18 @@ async function generateWithZai(apiKey: string, modelName: string, prompt: string
       stream: false,
       temperature: 0.7,
       messages: [{ role: "user", content: prompt }]
-    })
+    }),
+    signal: controller.signal
   })
+    .catch((error) => {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(`zai/${modelName} timeout after ${timeoutMs}ms`)
+      }
+      throw error
+    })
+    .finally(() => {
+      clearTimeout(timer)
+    })
 
   if (!res.ok) {
     const errBody = await res.text().catch(() => "")
@@ -235,7 +249,7 @@ ${userQuestion}
   const errors: unknown[] = []
   let geminiFailed = false
   let geminiSawRateLimit = false
-  const modelTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 9000)
+  const geminiTimeoutMs = Number(process.env.GEMINI_MODEL_TIMEOUT_MS ?? process.env.MODEL_TIMEOUT_MS ?? 6000)
 
   if (geminiApiKey) {
     const now = Date.now()
@@ -248,7 +262,7 @@ ${userQuestion}
 
       for (const model of geminiModels) {
         try {
-          const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), modelTimeoutMs, `gemini/${model}`)
+          const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), geminiTimeoutMs, `gemini/${model}`)
           const payload: ChatApiSuccessPayload = { answer, contextMatches: docs.length, fallbackUsed: false, fallbackReason: "none", model }
           if (cacheEnabled) {
             chatResponseCache.set(cacheKey, payload, cacheTtlMs)
@@ -274,7 +288,7 @@ ${userQuestion}
 
   if ((shouldUseZaiFallback || shouldUseZaiPrimary) && zaiApiKey) {
     try {
-      const answer = await withTimeout(generateWithZai(zaiApiKey, "glm-4.7-flash", prompt), modelTimeoutMs, "zai/glm-4.7-flash")
+      const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
       const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-rate-limit"
       const payload: ChatApiSuccessPayload = {
         answer,

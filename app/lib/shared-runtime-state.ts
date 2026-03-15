@@ -1,5 +1,3 @@
-import { Redis } from "@upstash/redis"
-
 type InMemoryEntry = {
   value: number
   expiresAt: number
@@ -21,22 +19,44 @@ function readMemory(key: string) {
   return entry
 }
 
-function getRedisClient() {
+function getRedisConfig() {
   const url = process.env.UPSTASH_REDIS_REST_URL
   const token = process.env.UPSTASH_REDIS_REST_TOKEN
   if (!url || !token) return null
-  return new Redis({ url, token })
+  return { url, token } as const
+}
+
+async function runRedisCommand(command: Array<string | number>) {
+  const config = getRedisConfig()
+  if (!config) {
+    return null
+  }
+
+  try {
+    const res = await fetch(config.url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${config.token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ command })
+    })
+
+    if (!res.ok) {
+      return null
+    }
+
+    const data = (await res.json()) as { result?: unknown }
+    return data.result ?? null
+  } catch {
+    return null
+  }
 }
 
 export async function getCooldownRemainingSec(key: string) {
-  const redis = getRedisClient()
-  if (redis) {
-    try {
-      const ttl = await redis.ttl(key)
-      return typeof ttl === "number" && ttl > 0 ? ttl : 0
-    } catch {
-      // fallback to memory
-    }
+  const ttl = await runRedisCommand(["TTL", key])
+  if (typeof ttl === "number" && ttl > 0) {
+    return ttl
   }
 
   const entry = readMemory(key)
@@ -46,33 +66,22 @@ export async function getCooldownRemainingSec(key: string) {
 
 export async function setCooldownSec(key: string, seconds: number) {
   const ttlSec = Math.max(1, Math.ceil(seconds))
-  const redis = getRedisClient()
-  if (redis) {
-    try {
-      await redis.set(key, 1, { ex: ttlSec })
-      return
-    } catch {
-      // fallback to memory
-    }
+  const result = await runRedisCommand(["SET", key, 1, "EX", ttlSec])
+  if (typeof result === "string" && result.toUpperCase() === "OK") {
+    return
   }
 
   memoryStore.set(key, { value: 1, expiresAt: nowMs() + ttlSec * 1000 })
 }
 
 export async function incrementWithinWindow(key: string, windowSec: number) {
-  const redis = getRedisClient()
-  if (redis) {
-    try {
-      const count = await redis.incr(key)
-      if (count === 1) {
-        await redis.expire(key, windowSec)
-      }
-
-      const ttl = await redis.ttl(key)
-      return { count, ttlSec: typeof ttl === "number" && ttl > 0 ? ttl : windowSec }
-    } catch {
-      // fallback to memory
+  const count = await runRedisCommand(["INCR", key])
+  if (typeof count === "number") {
+    if (count === 1) {
+      await runRedisCommand(["EXPIRE", key, windowSec])
     }
+    const ttl = await runRedisCommand(["TTL", key])
+    return { count, ttlSec: typeof ttl === "number" && ttl > 0 ? ttl : windowSec }
   }
 
   const current = readMemory(key)

@@ -497,7 +497,7 @@ export default function Page() {
                         </span>
                         <time>{new Date(item.updatedAt).toLocaleString("th-TH", { month: "short", day: "numeric", year: "numeric" })}</time>
                       </button>
-                      <div className="conversation-row-actions">
+                      <div className="conversation-row-actions conversation-row-actions-compact">
                         <button type="button" className="conversation-action" onClick={() => handleTogglePin(item.id)} title={pinnedConversationSet.has(item.id) ? "เลิกปักหมุด" : "ปักหมุด"}>
                           {pinnedConversationSet.has(item.id) ? <PinOff size={14} /> : <Pin size={14} />}
                         </button>
@@ -506,7 +506,7 @@ export default function Page() {
                         </button>
                         <button type="button" className="conversation-delete conversation-delete-wide" onClick={() => handleDeleteConversation(item)} title="ลบการสนทนา">
                           <Trash2 size={14} />
-                          ลบ
+                          <span className="sr-only">ลบ</span>
                         </button>
                       </div>
                       {pinnedConversationSet.has(item.id) ? (

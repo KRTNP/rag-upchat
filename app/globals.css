@@ -157,6 +157,8 @@ body {
   margin: 0;
   padding: 0;
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content;
   gap: 0.42rem;
   overflow: auto;
   scrollbar-width: thin;
@@ -184,7 +186,7 @@ body {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 9px;
-  padding: 0.5rem;
+  padding: 0.6rem;
   background: #fff;
   cursor: pointer;
   text-align: left;
@@ -213,6 +215,11 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.36rem;
+}
+
+.conversation-row-actions-compact {
+  grid-template-columns: repeat(3, min-content);
+  justify-content: end;
 }
 
 .conversation-action,
@@ -247,8 +254,19 @@ body {
   cursor: not-allowed;
 }
 
+.conversation-row-actions-compact .conversation-action,
+.conversation-row-actions-compact .conversation-delete {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+}
+
 .conversation-delete-wide {
   grid-column: span 2;
+}
+
+.conversation-row-actions-compact .conversation-delete-wide {
+  grid-column: auto;
 }
 
 .conversation-rename {
@@ -381,7 +399,7 @@ body {
   top: 0;
   bottom: 0;
   z-index: 20;
-  width: 58px;
+  width: 62px;
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 0.55rem;
@@ -402,12 +420,12 @@ body {
 
 .dock-main {
   align-content: start;
-  gap: 0.44rem;
+  gap: 0.5rem;
 }
 
 .dock-button {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 9px;
   border: 1px solid #e0d4c4;
   background: transparent;
@@ -1181,12 +1199,34 @@ body {
   }
 
   .chat-workspace {
-    padding-left: 58px;
+    padding-left: 54px;
   }
 
   .chat-workspace.sidebar-open .chat-sidebar {
-    left: 58px;
-    width: calc(100vw - 66px);
+    left: 54px;
+    width: calc(100vw - 60px);
+    border-radius: 0 12px 12px 0;
+  }
+
+  .sidebar-dock {
+    width: 50px;
+    padding: 0.56rem 0.24rem;
+  }
+
+  .dock-button {
+    width: 30px;
+    height: 30px;
+  }
+
+  .dock-logo-mark {
+    width: 30px;
+    height: 30px;
+  }
+
+  .dock-avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 0.62rem;
   }
 }
 

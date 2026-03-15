@@ -29,6 +29,7 @@ type ChatApiSuccessPayload = {
 }
 
 const chatResponseCache = new ResponseCache<ChatApiSuccessPayload>()
+let geminiBlockedUntilMs = 0
 
 function buildCacheKey(question: string, history: ChatTurn[]) {
   const compactHistory = history.slice(-4).map((turn) => `${turn.role}:${turn.text}`).join("|")
@@ -105,6 +106,21 @@ function isRateLimitError(error: unknown) {
     message.includes("resource exhausted") ||
     message.includes("too many requests")
   )
+}
+
+function parseRetryAfterSeconds(error: unknown) {
+  const text = error instanceof Error ? error.message : String(error ?? "")
+  const matchSec = text.match(/retry in\s+([\d.]+)\s*s/i)
+  if (matchSec?.[1]) {
+    return Math.max(1, Math.ceil(Number(matchSec[1])))
+  }
+
+  const matchDelay = text.match(/"retryDelay"\s*:\s*"(\d+)s"/i)
+  if (matchDelay?.[1]) {
+    return Math.max(1, Number(matchDelay[1]))
+  }
+
+  return null
 }
 
 export async function POST(req: Request) {
@@ -222,21 +238,33 @@ ${userQuestion}
   const modelTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 9000)
 
   if (geminiApiKey) {
-    const geminiModels = ["gemini-2.5-flash", "gemini-1.5-flash"] as const
+    const now = Date.now()
+    if (now < geminiBlockedUntilMs) {
+      geminiFailed = true
+      geminiSawRateLimit = true
+      errors.push(new Error(`gemini cooldown active for ${Math.ceil((geminiBlockedUntilMs - now) / 1000)}s`))
+    } else {
+      const geminiModels = ["gemini-2.5-flash"] as const
 
-    for (const model of geminiModels) {
-      try {
-        const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), modelTimeoutMs, `gemini/${model}`)
-        const payload: ChatApiSuccessPayload = { answer, contextMatches: docs.length, fallbackUsed: false, fallbackReason: "none", model }
-        if (cacheEnabled) {
-          chatResponseCache.set(cacheKey, payload, cacheTtlMs)
+      for (const model of geminiModels) {
+        try {
+          const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), modelTimeoutMs, `gemini/${model}`)
+          const payload: ChatApiSuccessPayload = { answer, contextMatches: docs.length, fallbackUsed: false, fallbackReason: "none", model }
+          if (cacheEnabled) {
+            chatResponseCache.set(cacheKey, payload, cacheTtlMs)
+          }
+          return Response.json({ ...payload, cacheHit: false })
+        } catch (err) {
+          geminiFailed = true
+          const rateLimited = isRateLimitError(err)
+          geminiSawRateLimit = geminiSawRateLimit || rateLimited
+          if (rateLimited) {
+            const retryAfterSec = parseRetryAfterSeconds(err) ?? 30
+            geminiBlockedUntilMs = Date.now() + retryAfterSec * 1000
+          }
+          errors.push(err)
+          console.error(`model attempt failed: gemini/${model}`, err)
         }
-        return Response.json({ ...payload, cacheHit: false })
-      } catch (err) {
-        geminiFailed = true
-        geminiSawRateLimit = geminiSawRateLimit || isRateLimitError(err)
-        errors.push(err)
-        console.error(`model attempt failed: gemini/${model}`, err)
       }
     }
   }

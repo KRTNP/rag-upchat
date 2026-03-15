@@ -226,10 +226,33 @@ function parseGeminiModelChain() {
   return (chain.length ? chain : ["gemini-2.5-flash", "gemma-3-27b-it"]) as readonly string[]
 }
 
+function isFollowUpQuestion(text: string) {
+  const q = text.trim().toLowerCase()
+  if (!q) return false
+  if (q.length <= 40) return true
+  return /^(แล้ว|งั้น|อันนี้|เรื่องนี้|มัน|แล้วเรื่อง|แล้วถ้า)/.test(q)
+}
+
+function buildRetrievalQuery(userQuestion: string, history: ChatTurn[]) {
+  const latestUserTurns = history
+    .filter((turn) => turn.role === "user")
+    .slice(-2)
+    .map((turn) => turn.text.trim())
+    .filter(Boolean)
+
+  if (latestUserTurns.length === 0 || !isFollowUpQuestion(userQuestion)) {
+    return userQuestion
+  }
+
+  const base = latestUserTurns.join("\n")
+  return `${base}\n${userQuestion}`.trim()
+}
+
 export async function POST(req: Request) {
   const { question, history, mode } = (await req.json()) as { question?: string; history?: ChatTurn[]; mode?: AnswerMode }
   const userQuestion = (question ?? "").trim()
   const safeHistory = history ?? []
+  const retrievalQuery = buildRetrievalQuery(userQuestion, safeHistory)
   const chatScope = req.headers.get("x-chat-scope") === "user" ? "user" : "guest"
   const answerMode: AnswerMode = mode === "chat" ? "chat" : "strict"
 
@@ -272,7 +295,7 @@ export async function POST(req: Request) {
     return Response.json({ error: message, fallbackReason: "supabase-init-failed" }, { status: 500 })
   }
 
-  const embedding = await getEmbedding(userQuestion)
+  const embedding = await getEmbedding(retrievalQuery)
 
   // Multi-step retrieval: start strict, then relax threshold, then keyword fallback.
   const retrievalPlans = [
@@ -302,7 +325,7 @@ export async function POST(req: Request) {
   }
 
   if (docs.length === 0) {
-    const terms = uniqueTokens(userQuestion).filter((term) => term.length >= 2).slice(0, 6)
+    const terms = uniqueTokens(retrievalQuery).filter((term) => term.length >= 2).slice(0, 6)
     if (terms.length > 0) {
       const orFilter = terms.map((term) => `content.ilike.%${term}%`).join(",")
       const keywordSearch = await supabase.from("documents").select("id,content").or(orFilter).limit(6)

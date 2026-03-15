@@ -29,13 +29,13 @@ npm install
 GEMINI_API_KEY=...
 GEMINI_MODEL_CHAIN=gemini-2.5-flash,gemma-3-27b-it
 ZAI_API_KEY=...
-ENABLE_SERVER_RATE_LIMIT=false
-SERVER_RATE_LIMIT_MAX=20
-SERVER_RATE_LIMIT_WINDOW_MS=60000
 MODEL_TIMEOUT_MS=6000
 LLM_MAX_LATENCY_MS=8000
 CHAT_RESPONSE_CACHE_TTL_MS=60000
-RAG_DIRECT_ANSWER_SIMILARITY=0.86
+RAG_DIRECT_ANSWER_SIMILARITY=0.75
+RAG_LOCK_ANSWER_SIMILARITY=0.65
+RAG_LOCK_LEXICAL_MIN=0.25
+RAG_LOCK_GAP_MIN=0.04
 PROHIBITED_KEYWORDS=keyword1,keyword2
 ENABLE_OUT_OF_SCOPE_GUARDRAIL=false
 UPSTASH_REDIS_REST_URL=...
@@ -44,7 +44,6 @@ SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-NEXT_PUBLIC_CLIENT_DAILY_QUOTA=40
 SUPABASE_SERVICE_ROLE_KEY=...
 CF_ACCOUNT_ID=...
 CF_API_TOKEN=...
@@ -173,11 +172,9 @@ npm run test:e2e
 
 ## 9) Guardrails (No-Login Mode)
 
-- Client-side quota: จำกัดจำนวนข้อความรายวันของ guest ผ่าน `NEXT_PUBLIC_CLIENT_DAILY_QUOTA`
-- Server-side rate limit: จำกัดตาม IP ผ่าน `SERVER_RATE_LIMIT_MAX` และ `SERVER_RATE_LIMIT_WINDOW_MS`
 - Model timeout: ตัดคำขอโมเดลที่ช้าเกินกำหนดผ่าน `MODEL_TIMEOUT_MS`
 - Response cache: แคชคำตอบระยะสั้นผ่าน `CHAT_RESPONSE_CACHE_TTL_MS` เพื่อลด latency ของคำถามซ้ำ
-- Shared runtime state: ถ้าตั้งค่า Upstash Redis จะใช้ state ร่วมกันข้าม instance สำหรับ rate-limit/cooldown (ถ้าไม่ตั้งจะ fallback เป็น memory)
+- Shared runtime state: ถ้าตั้งค่า Upstash Redis จะใช้ state ร่วมกันข้าม instance สำหรับ state ที่ต้องแชร์ (ถ้าไม่ตั้งจะ fallback เป็น memory)
 - Prohibited keywords: block ก่อนถึง LLM ผ่าน `PROHIBITED_KEYWORDS`
 - Out-of-scope rule: ถ้าคำถามนอกขอบเขตและไม่ match ฐานความรู้เพียงพอ ระบบจะปฏิเสธแบบสุภาพ
 

@@ -29,12 +29,10 @@ import {
   type ConversationSummary
 } from "@/app/lib/chat-memory"
 import type { ChatMessage } from "@/app/lib/chat-types"
-import { consumeGuestDailyQuota } from "@/app/lib/client-quota"
 import { deriveConversationTitle, isAutoTitleCandidate } from "@/app/lib/conversation-title"
 import { buildDynamicQuickQuestions, STATIC_QUICK_QUESTIONS } from "@/app/lib/quick-questions"
 
 const ERROR_MESSAGE = "ไม่สามารถเชื่อมต่อระบบได้ กรุณาลองใหม่อีกครั้ง"
-const CLIENT_DAILY_QUOTA = Number(process.env.NEXT_PUBLIC_CLIENT_DAILY_QUOTA ?? 40)
 
 type ToastState = {
   kind: "info" | "success" | "error"
@@ -117,6 +115,9 @@ export default function Page() {
     setConversationId(nextConversationId)
     const loaded = await loadConversationMessages(nextConversationId)
     setMessages(loaded)
+    if (typeof window !== "undefined" && window.innerWidth <= 980) {
+      setSidebarVisible(false)
+    }
   }
 
   useEffect(() => {
@@ -199,16 +200,6 @@ export default function Page() {
       return
     }
 
-    if (!userId) {
-      const quota = consumeGuestDailyQuota(CLIENT_DAILY_QUOTA)
-      if (!quota.allowed) {
-        const message = `ถึงโควต้ารายวัน (${quota.limit} ข้อความ/วัน) สำหรับโหมดผู้เยี่ยมชม`
-        setError(message)
-        showToast("error", message)
-        return
-      }
-    }
-
     const fromRetry = Boolean(nextQuestion)
     setError(null)
     setIsLoading(true)
@@ -247,7 +238,7 @@ export default function Page() {
           "Content-Type": "application/json",
           "X-Chat-Scope": userId ? "user" : "guest"
         },
-        body: JSON.stringify({ question: prompt, history: compactHistory })
+        body: JSON.stringify({ question: prompt, history: compactHistory, mode: "strict" })
       })
 
       if (!res.ok) {
@@ -305,6 +296,9 @@ export default function Page() {
       setMessages([])
       setError(null)
       setLastQuestion("")
+      if (typeof window !== "undefined" && window.innerWidth <= 980) {
+        setSidebarVisible(false)
+      }
       showToast("success", "เริ่มการสนทนาใหม่แล้ว")
     } catch (createError) {
       const message = createError instanceof Error ? createError.message : "ไม่สามารถสร้างการสนทนาได้"

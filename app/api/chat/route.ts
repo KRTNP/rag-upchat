@@ -4,8 +4,6 @@ import { docToText } from "@/app/lib/document-text"
 import { getEmbedding } from "@/app/lib/embedding"
 import { checkProhibitedKeyword, isOutOfScopeQuestion, parseProhibitedKeywords } from "@/app/lib/guardrails"
 import { ResponseCache } from "@/app/lib/response-cache"
-import { getCooldownRemainingSec, setCooldownSec } from "@/app/lib/shared-runtime-state"
-import { checkRateLimit } from "@/app/lib/server-rate-limit"
 import { getSupabaseClient } from "@/app/lib/supabase"
 
 type MatchedDoc = {
@@ -20,6 +18,7 @@ type ChatTurn = {
   role: "user" | "bot"
   text: string
 }
+type AnswerMode = "strict" | "chat"
 
 type ChatApiSuccessPayload = {
   answer: string
@@ -123,32 +122,94 @@ function isRateLimitError(error: unknown) {
   )
 }
 
-function parseRetryAfterSeconds(error: unknown) {
-  const text = error instanceof Error ? error.message : String(error ?? "")
-  const matchSec = text.match(/retry in\s+([\d.]+)\s*s/i)
-  if (matchSec?.[1]) {
-    return Math.max(1, Math.ceil(Number(matchSec[1])))
-  }
-
-  const matchDelay = text.match(/"retryDelay"\s*:\s*"(\d+)s"/i)
-  if (matchDelay?.[1]) {
-    return Math.max(1, Number(matchDelay[1]))
-  }
-
-  return null
-}
-
-function shouldCooldownZai(error: unknown) {
-  const message = (error instanceof Error ? error.message : String(error ?? "")).toLowerCase()
-  return message.includes("timeout") || message.includes("429") || message.includes("rate limit") || message.includes("unavailable")
-}
-
 function extractAnswerFromContent(content: string | undefined) {
   if (!content) return ""
   const marker = "คำตอบ:"
   const idx = content.indexOf(marker)
   if (idx === -1) return ""
   return content.slice(idx + marker.length).trim()
+}
+
+function extractQuestionFromContent(content: string | undefined) {
+  if (!content) return ""
+  const q = content.split("คำตอบ:")[0] ?? ""
+  return q.replace("คำถาม:", "").trim()
+}
+
+function uniqueTokens(text: string) {
+  return Array.from(
+    new Set(
+      text
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}\-]+/u)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 2)
+    )
+  )
+}
+
+function lexicalOverlapScore(a: string, b: string) {
+  const aTokens = uniqueTokens(a)
+  const bSet = new Set(uniqueTokens(b))
+  if (!aTokens.length || !bSet.size) return 0
+  let hit = 0
+  for (const token of aTokens) {
+    if (bSet.has(token)) hit += 1
+  }
+  return hit / aTokens.length
+}
+
+type QueryConstraints = {
+  upCode?: string
+  grade?: string
+  programHint?: string
+}
+
+function extractQueryConstraints(question: string): QueryConstraints {
+  const text = question.toLowerCase()
+  const upMatch = question.match(/\bup\s*\.?\s*(\d+(?:\.\d+)?)\b/i)
+  const gradeMatch = question.match(/ชั้นปี\s*\d(?:\s*-\s*\d)?/i)
+
+  const programHints = [
+    "ปริญญาตรีควบ",
+    "แพทย์แผนจีน",
+    "ปริญญาตรี ปกติ",
+    "โครงการพิเศษ",
+    "บัณฑิตศึกษา",
+    "แพทยศาสตรบัณฑิต",
+    "ชั้นปี 3",
+    "ชั้นปี 4-6"
+  ]
+  const programHint = programHints.find((hint) => text.includes(hint.toLowerCase()))
+
+  return {
+    upCode: upMatch ? upMatch[1] : undefined,
+    grade: gradeMatch ? gradeMatch[0].replace(/\s+/g, " ").trim() : undefined,
+    programHint
+  }
+}
+
+function matchesConstraints(content: string | undefined, constraints: QueryConstraints) {
+  const source = (content ?? "").toLowerCase()
+  if (!source) return false
+
+  if (constraints.upCode) {
+    const normalized = source.replace(/\s+/g, "")
+    const upNeedle = `up${constraints.upCode.replace(/\s+/g, "").toLowerCase()}`
+    if (!normalized.includes(upNeedle)) {
+      return false
+    }
+  }
+
+  if (constraints.grade && !source.includes(constraints.grade.toLowerCase())) {
+    return false
+  }
+
+  if (constraints.programHint && !source.includes(constraints.programHint.toLowerCase())) {
+    return false
+  }
+
+  return true
 }
 
 function parseGeminiModelChain() {
@@ -166,10 +227,11 @@ function parseGeminiModelChain() {
 }
 
 export async function POST(req: Request) {
-  const { question, history } = (await req.json()) as { question?: string; history?: ChatTurn[] }
+  const { question, history, mode } = (await req.json()) as { question?: string; history?: ChatTurn[]; mode?: AnswerMode }
   const userQuestion = (question ?? "").trim()
   const safeHistory = history ?? []
   const chatScope = req.headers.get("x-chat-scope") === "user" ? "user" : "guest"
+  const answerMode: AnswerMode = mode === "chat" ? "chat" : "strict"
 
   if (!userQuestion) {
     return Response.json({ error: "Missing question", fallbackReason: "invalid-request" }, { status: 400 })
@@ -182,21 +244,6 @@ export async function POST(req: Request) {
     const cached = chatResponseCache.get(cacheKey)
     if (cached) {
       return Response.json({ ...cached, cacheHit: true })
-    }
-  }
-
-  const clientIp = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown"
-  const rateLimitMax = Number(process.env.SERVER_RATE_LIMIT_MAX ?? 20)
-  const rateLimitWindowMs = Number(process.env.SERVER_RATE_LIMIT_WINDOW_MS ?? 60_000)
-  const enableServerRateLimit = process.env.ENABLE_SERVER_RATE_LIMIT === "true"
-
-  if (enableServerRateLimit) {
-    const limiter = await checkRateLimit(`chat:${clientIp}`, rateLimitMax, rateLimitWindowMs)
-    if (!limiter.allowed) {
-      return Response.json(
-        { error: "Too many requests", fallbackReason: "server-rate-limit", retryAfterSec: limiter.retryAfterSec },
-        { status: 429, headers: { "Retry-After": String(limiter.retryAfterSec) } }
-      )
     }
   }
 
@@ -238,12 +285,29 @@ export async function POST(req: Request) {
   }
 
   const docs = (primary.data ?? []) as MatchedDoc[]
-  const topDoc = [...docs].sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))[0]
+  const constraints = extractQueryConstraints(userQuestion)
+  const constrainedDocs = docs.filter((doc) => matchesConstraints(doc.content, constraints))
+  const docsForRanking = constrainedDocs.length > 0 ? constrainedDocs : docs
+  const sortedDocs = [...docsForRanking].sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))
+  const topDoc = sortedDocs[0]
+  const secondDoc = sortedDocs[1]
   const topSimilarity = topDoc?.similarity ?? 0
-  const directAnswerThreshold = Number(process.env.RAG_DIRECT_ANSWER_SIMILARITY ?? 0.86)
+  const directAnswerThreshold = Number(process.env.RAG_DIRECT_ANSWER_SIMILARITY ?? 0.75)
   const directAnswer = extractAnswerFromContent(topDoc?.content)
+  const lockedAnswerThreshold = Number(process.env.RAG_LOCK_ANSWER_SIMILARITY ?? 0.65)
+  const lexicalMin = Number(process.env.RAG_LOCK_LEXICAL_MIN ?? 0.25)
+  const similarityGapMin = Number(process.env.RAG_LOCK_GAP_MIN ?? 0.04)
+  const topQuestionText = extractQuestionFromContent(topDoc?.content)
+  const lexicalScore = lexicalOverlapScore(userQuestion, topQuestionText)
+  const similarityGap = (topDoc?.similarity ?? 0) - (secondDoc?.similarity ?? 0)
+  const canLockAnswer = Boolean(
+    directAnswer &&
+      topSimilarity >= lockedAnswerThreshold &&
+      lexicalScore >= lexicalMin &&
+      (sortedDocs.length === 1 || similarityGap >= similarityGapMin)
+  )
 
-  if (topDoc && topSimilarity >= directAnswerThreshold && directAnswer) {
+  if (answerMode === "strict" && topDoc && topSimilarity >= directAnswerThreshold && directAnswer && canLockAnswer) {
     const payload: ChatApiSuccessPayload = {
       answer: directAnswer,
       contextMatches: docs.length,
@@ -272,7 +336,7 @@ export async function POST(req: Request) {
     ? "- ถ้าคำถามอยู่นอกขอบเขต กยศ/การกู้ยืม/งานนิสิต/ข้อมูลในคลังความรู้ ให้ตอบปฏิเสธสุภาพว่าอยู่นอกขอบเขต"
     : ""
 
-  const context = docs.map(docToText).filter(Boolean).join("\n")
+  const context = docsForRanking.map(docToText).filter(Boolean).join("\n")
   const recentHistory = safeHistory
     .slice(-6)
     .map((turn) => `${turn.role === "user" ? "ผู้ใช้" : "ผู้ช่วย"}: ${turn.text}`)
@@ -286,7 +350,9 @@ export async function POST(req: Request) {
 ${outOfScopeRule}
 - ถ้าถามเกี่ยวกับ กยศ ให้ใช้ข้อมูลด้านล่างเป็นหลัก และตอบให้ตรงข้อเท็จจริงที่สุด
 - ถ้าในข้อมูลอ้างอิงมีคำตอบตรง ให้ตอบจากข้อมูลอ้างอิงก่อนเสมอ และห้ามแต่งข้อมูลเพิ่ม
+- ถ้ามีคำตอบอยู่ในข้อมูลอ้างอิง ให้ตอบเฉพาะเนื้อคำตอบสั้นๆ โดยไม่ต้องทักทาย/ไม่ต้องเกริ่น
 - ถ้าข้อมูลอ้างอิงมีหลายกรณี (เช่น หลายภาค/หลายประเภท) ให้สรุปทุกกรณีแบบเป็นรายการในคำตอบเดียว ห้ามถามกลับก่อน
+- โหมดคำตอบตอนนี้คือ: ${answerMode} (strict = ตอบสั้นตรงข้อมูล, chat = อธิบายเพิ่มได้)
 
 ข้อมูลอ้างอิง:
 ${context || "ไม่มีข้อมูลอ้างอิงที่ match ได้"}
@@ -300,95 +366,61 @@ ${userQuestion}
 ตอบให้เหมือนกำลังคุยแชทกับเพื่อน
 `
 
-  const preGeminiCooldownSec = geminiApiKey ? await getCooldownRemainingSec("cooldown:gemini") : 0
-  const preZaiCooldownSec = zaiApiKey ? await getCooldownRemainingSec("cooldown:zai") : 0
-  if ((geminiApiKey ? preGeminiCooldownSec > 0 : true) && (zaiApiKey ? preZaiCooldownSec > 0 : true)) {
-    const fallbackItems = docs.map((doc) => docToText(doc)).filter(Boolean).slice(0, 3)
-    const fallbackAnswer = fallbackItems.length
-      ? `ระบบ AI ติดโควต้าชั่วคราวทั้งสองช่องทาง กรุณารอสักครู่ แต่มีข้อมูลอ้างอิงที่เกี่ยวข้อง:\n- ${fallbackItems.join("\n- ")}`
-      : "ระบบ AI ติดโควต้าชั่วคราวทั้งสองช่องทาง กรุณารอสักครู่ แล้วลองใหม่อีกครั้ง"
-
-    const payload: ChatApiSuccessPayload = {
-      answer: fallbackAnswer,
-      contextMatches: docs.length,
-      fallbackUsed: true,
-      fallbackReason: "providers-in-cooldown",
-      model: "context-fallback"
-    }
-    return Response.json({ ...payload, cacheHit: false })
-  }
-
   const errors: unknown[] = []
   let geminiFailed = false
   let geminiSawRateLimit = false
-  let geminiRetryAfterSec: number | null = null
   const geminiTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 6000)
 
   if (geminiApiKey) {
-    const geminiCooldownSec = preGeminiCooldownSec
-    if (geminiCooldownSec > 0) {
-      geminiFailed = true
-      geminiSawRateLimit = true
-      errors.push(new Error(`gemini cooldown active for ${geminiCooldownSec}s`))
-    } else {
-      const geminiModels = parseGeminiModelChain()
+    const geminiModels = parseGeminiModelChain()
 
-      for (const model of geminiModels) {
-        try {
-          const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), geminiTimeoutMs, `gemini/${model}`)
-          const payload: ChatApiSuccessPayload = { answer, contextMatches: docs.length, fallbackUsed: false, fallbackReason: "none", model }
-          if (cacheEnabled) {
-            chatResponseCache.set(cacheKey, payload, cacheTtlMs)
-          }
-          return Response.json({ ...payload, cacheHit: false })
-        } catch (err) {
-          geminiFailed = true
-          const rateLimited = isRateLimitError(err)
-          geminiSawRateLimit = geminiSawRateLimit || rateLimited
-          if (rateLimited) {
-            const retryAfterSec = parseRetryAfterSeconds(err) ?? 30
-            geminiRetryAfterSec = retryAfterSec
-            await setCooldownSec("cooldown:gemini", retryAfterSec)
-          }
-          errors.push(err)
-          console.error(`model attempt failed: gemini/${model}`, err)
-        }
-      }
-    }
-  }
-
-  const shortRetryRateLimit = Boolean(geminiRetryAfterSec !== null && geminiRetryAfterSec <= 3)
-  const shouldUseZaiFallback = Boolean(zaiApiKey && geminiApiKey && geminiFailed && geminiSawRateLimit && !shortRetryRateLimit)
-  const shouldUseZaiPrimary = Boolean(zaiApiKey && !geminiApiKey)
-
-  if ((shouldUseZaiFallback || shouldUseZaiPrimary) && zaiApiKey) {
-    const zaiCooldownSec = preZaiCooldownSec
-    if (zaiCooldownSec > 0) {
-      errors.push(new Error(`zai cooldown active for ${zaiCooldownSec}s`))
-    } else {
+    for (const model of geminiModels) {
       try {
-        // Give z.ai full timeout budget from config, independent of Gemini elapsed time.
-        const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
-        const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-rate-limit"
+        const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), geminiTimeoutMs, `gemini/${model}`)
+        const finalAnswer = answerMode === "strict" && canLockAnswer ? directAnswer : answer
         const payload: ChatApiSuccessPayload = {
-          answer,
+          answer: finalAnswer,
           contextMatches: docs.length,
-          fallbackUsed: Boolean(geminiApiKey),
-          fallbackReason,
-          model: "glm-4.7-flash"
+          fallbackUsed: false,
+          fallbackReason: answerMode === "strict" && canLockAnswer ? "locked-rag-answer" : "none",
+          model
         }
         if (cacheEnabled) {
           chatResponseCache.set(cacheKey, payload, cacheTtlMs)
         }
         return Response.json({ ...payload, cacheHit: false })
       } catch (err) {
-        if (shouldCooldownZai(err)) {
-          const cooldownSec = parseRetryAfterSeconds(err) ?? 45
-          await setCooldownSec("cooldown:zai", Math.max(5, cooldownSec))
-        }
+        geminiFailed = true
+        geminiSawRateLimit = geminiSawRateLimit || isRateLimitError(err)
         errors.push(err)
-        console.error("model attempt failed: zai/glm-4.7-flash", err)
+        console.error(`model attempt failed: gemini/${model}`, err)
       }
+    }
+  }
+
+  const shouldUseZaiFallback = Boolean(zaiApiKey && geminiApiKey && geminiFailed)
+  const shouldUseZaiPrimary = Boolean(zaiApiKey && !geminiApiKey)
+
+  if ((shouldUseZaiFallback || shouldUseZaiPrimary) && zaiApiKey) {
+    try {
+      // Give z.ai full timeout budget from config, independent of Gemini elapsed time.
+      const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
+      const finalAnswer = answerMode === "strict" && canLockAnswer ? directAnswer : answer
+      const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-failed"
+      const payload: ChatApiSuccessPayload = {
+        answer: finalAnswer,
+        contextMatches: docs.length,
+        fallbackUsed: Boolean(geminiApiKey),
+        fallbackReason: answerMode === "strict" && canLockAnswer ? "locked-rag-answer" : fallbackReason,
+        model: "glm-4.7-flash"
+      }
+      if (cacheEnabled) {
+        chatResponseCache.set(cacheKey, payload, cacheTtlMs)
+      }
+      return Response.json({ ...payload, cacheHit: false })
+    } catch (err) {
+      errors.push(err)
+      console.error("model attempt failed: zai/glm-4.7-flash", err)
     }
   }
 
@@ -403,11 +435,7 @@ ${userQuestion}
     console.error("all model attempts failed", errors)
   }
 
-  const finalFallbackReason = shortRetryRateLimit
-    ? "gemini-rate-limit-short-retry"
-    : quotaLikeFailure
-      ? "all-models-failed-after-rate-limit"
-      : "all-models-failed-non-rate-limit"
+  const finalFallbackReason = quotaLikeFailure ? "all-models-failed-after-rate-limit" : "all-models-failed"
   const fallbackPayload: ChatApiSuccessPayload = {
     answer: fallbackAnswer,
     contextMatches: docs.length,

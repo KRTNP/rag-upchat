@@ -94,6 +94,7 @@ body {
   min-height: 0;
   overflow: hidden;
   padding-left: 64px;
+  position: relative;
 }
 
 .chat-workspace.sidebar-open {
@@ -1103,8 +1104,32 @@ body {
     grid-template-columns: 1fr;
   }
 
+  .chat-workspace.sidebar-open {
+    grid-template-columns: 1fr;
+  }
+
   .chat-sidebar {
-    max-height: 260px;
+    max-height: none;
+  }
+
+  .chat-workspace.sidebar-open .chat-sidebar {
+    position: absolute;
+    left: 64px;
+    top: 0;
+    bottom: 0;
+    width: min(320px, calc(100vw - 76px));
+    z-index: 25;
+    overflow: auto;
+  }
+
+  .conversation-item + .conversation-row-actions,
+  .conversation-item + .conversation-row-actions + .conversation-reorder {
+    display: none;
+  }
+
+  .conversation-item.active + .conversation-row-actions,
+  .conversation-item.active + .conversation-row-actions + .conversation-reorder {
+    display: grid;
   }
 }
 
@@ -1157,6 +1182,11 @@ body {
 
   .chat-workspace {
     padding-left: 58px;
+  }
+
+  .chat-workspace.sidebar-open .chat-sidebar {
+    left: 58px;
+    width: calc(100vw - 66px);
   }
 }
 

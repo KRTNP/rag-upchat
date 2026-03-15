@@ -217,9 +217,8 @@ body {
   gap: 0.36rem;
 }
 
-.conversation-row-actions-compact {
-  grid-template-columns: repeat(3, min-content);
-  justify-content: end;
+.conversation-row-actions-inline {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .conversation-action,
@@ -254,18 +253,21 @@ body {
   cursor: not-allowed;
 }
 
-.conversation-row-actions-compact .conversation-action,
-.conversation-row-actions-compact .conversation-delete {
-  width: 30px;
-  height: 30px;
-  padding: 0;
+.conversation-row-actions-inline .conversation-action,
+.conversation-row-actions-inline .conversation-delete {
+  min-height: 32px;
+  padding: 0.34rem 0.42rem;
+  font-size: 0.72rem;
+  justify-content: center;
+  gap: 0.24rem;
+  white-space: nowrap;
 }
 
 .conversation-delete-wide {
   grid-column: span 2;
 }
 
-.conversation-row-actions-compact .conversation-delete-wide {
+.conversation-row-actions-inline .conversation-delete-wide {
   grid-column: auto;
 }
 
@@ -1142,12 +1144,15 @@ body {
 
   .conversation-item + .conversation-row-actions,
   .conversation-item + .conversation-row-actions + .conversation-reorder {
-    display: none;
+    display: grid;
   }
 
-  .conversation-item.active + .conversation-row-actions,
-  .conversation-item.active + .conversation-row-actions + .conversation-reorder {
-    display: grid;
+  .conversation-row-actions-inline {
+    grid-template-columns: 1fr;
+  }
+
+  .conversation-delete-wide {
+    grid-column: auto;
   }
 }
 

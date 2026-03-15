@@ -298,7 +298,11 @@ export default function Page() {
 
   async function handleNewConversation() {
     if (!userId) {
-      showToast("info", "กรุณาเข้าสู่ระบบเพื่อใช้งานประวัติการสนทนาหลายรายการ")
+      setMessages([])
+      setQuestion("")
+      setError(null)
+      setLastQuestion("")
+      showToast("info", "เริ่มแชทใหม่แล้ว (โหมดผู้เยี่ยมชมจะไม่บันทึกหลายรายการ)")
       return
     }
 
@@ -509,7 +513,6 @@ export default function Page() {
                         type="button"
                         className={`conversation-item ${conversationId === item.id ? "active" : ""}`}
                         onClick={() => openConversation(item.id)}
-                        onDoubleClick={() => startRename(item)}
                       >
                         <span style={{ display: "flex", alignItems: "center", gap: "6px", fontWeight: pinnedConversationSet.has(item.id) ? 500 : 400 }}>
                           {pinnedConversationSet.has(item.id) && <Pin size={12} color="var(--accent)" />}
@@ -517,16 +520,18 @@ export default function Page() {
                         </span>
                         <time>{new Date(item.updatedAt).toLocaleString("th-TH", { month: "short", day: "numeric", year: "numeric" })}</time>
                       </button>
-                      <div className="conversation-row-actions conversation-row-actions-compact">
+                      <div className="conversation-row-actions conversation-row-actions-inline">
                         <button type="button" className="conversation-action" onClick={() => handleTogglePin(item.id)} title={pinnedConversationSet.has(item.id) ? "เลิกปักหมุด" : "ปักหมุด"}>
                           {pinnedConversationSet.has(item.id) ? <PinOff size={14} /> : <Pin size={14} />}
+                          <span>{pinnedConversationSet.has(item.id) ? "เลิกปักหมุด" : "ปักหมุด"}</span>
                         </button>
                         <button type="button" className="conversation-action" onClick={() => startRename(item)} title="เปลี่ยนชื่อ">
                           <Edit2 size={14} />
+                          <span>เปลี่ยนชื่อ</span>
                         </button>
                         <button type="button" className="conversation-delete conversation-delete-wide" onClick={() => requestDeleteConversation(item)} title="ลบการสนทนา">
                           <Trash2 size={14} />
-                          <span className="sr-only">ลบ</span>
+                          <span>ลบ</span>
                         </button>
                       </div>
                       {pinnedConversationSet.has(item.id) ? (

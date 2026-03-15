@@ -274,17 +274,62 @@ export async function POST(req: Request) {
 
   const embedding = await getEmbedding(userQuestion)
 
-  const primary = await supabase.rpc("match_documents", {
-    query_embedding: embedding,
-    match_threshold: 0.68,
-    match_count: 3
-  })
+  // Multi-step retrieval: start strict, then relax threshold, then keyword fallback.
+  const retrievalPlans = [
+    { threshold: 0.68, count: 3 },
+    { threshold: 0.6, count: 5 },
+    { threshold: 0.52, count: 8 }
+  ]
 
-  if (primary.error) {
-    console.error("search error:", primary.error)
+  let docs: MatchedDoc[] = []
+  for (const plan of retrievalPlans) {
+    const attempt = await supabase.rpc("match_documents", {
+      query_embedding: embedding,
+      match_threshold: plan.threshold,
+      match_count: plan.count
+    })
+
+    if (attempt.error) {
+      console.error("search error:", attempt.error)
+      continue
+    }
+
+    const rows = (attempt.data ?? []) as MatchedDoc[]
+    if (rows.length > 0) {
+      docs = rows
+      break
+    }
   }
 
-  const docs = (primary.data ?? []) as MatchedDoc[]
+  if (docs.length === 0) {
+    const terms = uniqueTokens(userQuestion).filter((term) => term.length >= 2).slice(0, 6)
+    if (terms.length > 0) {
+      const orFilter = terms.map((term) => `content.ilike.%${term}%`).join(",")
+      const keywordSearch = await supabase.from("documents").select("id,content").or(orFilter).limit(6)
+      if (keywordSearch.error) {
+        console.error("keyword search error:", keywordSearch.error)
+      } else {
+        docs = ((keywordSearch.data ?? []) as Array<{ id: number; content: string }>).map((row) => ({
+          id: row.id,
+          content: row.content,
+          similarity: 0.5
+        }))
+      }
+    }
+  }
+
+  if (docs.length === 0) {
+    return Response.json({
+      answer:
+        "ยังไม่พบข้อมูลที่ตรงคำถามนี้ในคลังความรู้ ลองระบุคำสำคัญเพิ่ม เช่น ประเภทผู้กู้/ภาคการศึกษา/ชื่อแบบฟอร์ม แล้วถามอีกครั้ง",
+      contextMatches: 0,
+      fallbackUsed: true,
+      fallbackReason: "no-context-match",
+      model: "context-fallback",
+      cacheHit: false
+    })
+  }
+
   const constraints = extractQueryConstraints(userQuestion)
   const constrainedDocs = docs.filter((doc) => matchesConstraints(doc.content, constraints))
   const docsForRanking = constrainedDocs.length > 0 ? constrainedDocs : docs
@@ -295,6 +340,7 @@ export async function POST(req: Request) {
   const directAnswerThreshold = Number(process.env.RAG_DIRECT_ANSWER_SIMILARITY ?? 0.75)
   const directAnswer = extractAnswerFromContent(topDoc?.content)
   const lockedAnswerThreshold = Number(process.env.RAG_LOCK_ANSWER_SIMILARITY ?? 0.65)
+  const strictMinSimilarity = Number(process.env.RAG_STRICT_MIN_SIMILARITY ?? 0.62)
   const lexicalMin = Number(process.env.RAG_LOCK_LEXICAL_MIN ?? 0.25)
   const similarityGapMin = Number(process.env.RAG_LOCK_GAP_MIN ?? 0.04)
   const topQuestionText = extractQuestionFromContent(topDoc?.content)
@@ -306,6 +352,25 @@ export async function POST(req: Request) {
       lexicalScore >= lexicalMin &&
       (sortedDocs.length === 1 || similarityGap >= similarityGapMin)
   )
+
+  if (answerMode === "strict" && topSimilarity < strictMinSimilarity) {
+    const suggestions = sortedDocs
+      .slice(0, 3)
+      .map((doc) => extractQuestionFromContent(doc.content))
+      .filter(Boolean)
+    const suggestionText = suggestions.length
+      ? `\nตัวอย่างหัวข้อที่ใกล้เคียง:\n- ${suggestions.join("\n- ")}`
+      : ""
+
+    return Response.json({
+      answer: `ยังไม่เจอข้อมูลที่มั่นใจว่า “ตรงคำถามนี้” พอครับ ลองระบุให้ชัดขึ้น เช่น ภาคเรียน/ประเภทผู้กู้/ชื่อแบบฟอร์ม${suggestionText}`,
+      contextMatches: docs.length,
+      fallbackUsed: true,
+      fallbackReason: "low-confidence-context",
+      model: "context-fallback",
+      cacheHit: false
+    })
+  }
 
   if (answerMode === "strict" && topDoc && topSimilarity >= directAnswerThreshold && directAnswer && canLockAnswer) {
     const payload: ChatApiSuccessPayload = {

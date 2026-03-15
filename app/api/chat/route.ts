@@ -302,7 +302,7 @@ export async function POST(req: Request) {
 
   const cacheTtlMs = Number(process.env.CHAT_RESPONSE_CACHE_TTL_MS ?? 60_000)
   const cacheKey = buildCacheKey(userQuestion, safeHistory)
-  const cacheEnabled = chatScope === "guest"
+  const cacheEnabled = chatScope === "guest" && process.env.ENABLE_CHAT_RESPONSE_CACHE === "true"
   if (cacheEnabled) {
     const cached = chatResponseCache.get(cacheKey)
     if (cached) {

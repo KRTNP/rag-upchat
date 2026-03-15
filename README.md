@@ -31,6 +31,7 @@ GEMINI_MODEL_CHAIN=gemini-2.5-flash,gemma-3-27b-it
 ZAI_API_KEY=...
 MODEL_TIMEOUT_MS=6000
 LLM_MAX_LATENCY_MS=8000
+ENABLE_CHAT_RESPONSE_CACHE=false
 CHAT_RESPONSE_CACHE_TTL_MS=60000
 RAG_DIRECT_ANSWER_SIMILARITY=0.75
 RAG_LOCK_ANSWER_SIMILARITY=0.65
@@ -173,7 +174,7 @@ npm run test:e2e
 ## 9) Guardrails (No-Login Mode)
 
 - Model timeout: ตัดคำขอโมเดลที่ช้าเกินกำหนดผ่าน `MODEL_TIMEOUT_MS`
-- Response cache: แคชคำตอบระยะสั้นผ่าน `CHAT_RESPONSE_CACHE_TTL_MS` เพื่อลด latency ของคำถามซ้ำ
+- Response cache: เปิด/ปิดด้วย `ENABLE_CHAT_RESPONSE_CACHE` และกำหนด TTL ผ่าน `CHAT_RESPONSE_CACHE_TTL_MS`
 - Shared runtime state: ถ้าตั้งค่า Upstash Redis จะใช้ state ร่วมกันข้าม instance สำหรับ state ที่ต้องแชร์ (ถ้าไม่ตั้งจะ fallback เป็น memory)
 - Prohibited keywords: block ก่อนถึง LLM ผ่าน `PROHIBITED_KEYWORDS`
 - Out-of-scope rule: ถ้าคำถามนอกขอบเขตและไม่ match ฐานความรู้เพียงพอ ระบบจะปฏิเสธแบบสุภาพ

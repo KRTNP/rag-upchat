@@ -39,6 +39,13 @@ type ToastState = {
   text: string
 }
 
+type ReplyMeta = {
+  model?: string
+  fallbackReason?: string
+  contextMatches?: number
+  cacheHit?: boolean
+}
+
 function makeMessage(role: ChatMessage["role"], text: string): ChatMessage {
   return {
     id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -54,6 +61,7 @@ export default function Page() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastQuestion, setLastQuestion] = useState("")
+  const [lastReplyMeta, setLastReplyMeta] = useState<ReplyMeta | null>(null)
 
   const [userId, setUserId] = useState<string | null>(null)
   const [userEmail, setUserEmail] = useState<string | null>(null)
@@ -84,8 +92,8 @@ export default function Page() {
 
   const dynamicQuickQuestions = useMemo(() => buildDynamicQuickQuestions(messages), [messages])
   const quickQuestions = useMemo(
-    () => (dynamicQuickQuestions.length > 0 ? dynamicQuickQuestions : STATIC_QUICK_QUESTIONS),
-    [dynamicQuickQuestions]
+    () => (dynamicQuickQuestions.length > 0 ? dynamicQuickQuestions : messages.length === 0 ? STATIC_QUICK_QUESTIONS : []),
+    [dynamicQuickQuestions, messages.length]
   )
   const filteredConversations = useMemo(() => {
     const query = sidebarQuery.trim().toLowerCase()
@@ -272,7 +280,13 @@ export default function Page() {
         throw new Error(payload.error ? `${payload.error}${retrySuffix}` : `คำขอขัดข้อง: ${res.status}`)
       }
 
-      const data = (await res.json()) as { answer?: string }
+      const data = (await res.json()) as {
+        answer?: string
+        model?: string
+        fallbackReason?: string
+        contextMatches?: number
+        cacheHit?: boolean
+      }
       const answer = data.answer
 
       if (!answer) {
@@ -281,6 +295,12 @@ export default function Page() {
 
       const botMsg = makeMessage("bot", answer)
       setMessages((prev) => [...prev, botMsg])
+      setLastReplyMeta({
+        model: data.model,
+        fallbackReason: data.fallbackReason,
+        contextMatches: data.contextMatches,
+        cacheHit: data.cacheHit
+      })
 
       await saveCloudMessage(botMsg).catch(() => {
         showToast("error", "บันทึกเฉพาะในอุปกรณ์ (ซิงค์คลาวด์ล้มเหลว)")
@@ -696,6 +716,12 @@ export default function Page() {
           <div className="chat-toolbar">
             <div>
               <ChatStatus isLoading={isLoading} error={error} />
+              {lastReplyMeta ? (
+                <p className="chat-status" data-testid="reply-meta">
+                  model: {lastReplyMeta.model ?? "-"} | reason: {lastReplyMeta.fallbackReason ?? "-"} | matches:{" "}
+                  {String(lastReplyMeta.contextMatches ?? 0)} | cache: {String(Boolean(lastReplyMeta.cacheHit))}
+                </p>
+              ) : null}
               {toast ? <AppToast kind={toast.kind} text={toast.text} /> : null}
             </div>
             <div className="chat-actions">
@@ -718,45 +744,43 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="quick-questions-panel">
-            <div className="quick-questions-control">
-              <button
-                type="button"
-                className="quick-toggle-button"
-                aria-label={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
-                title={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
-                onClick={() => setQuickQuestionsVisible((prev) => !prev)}
-              >
-                {quickQuestionsVisible ? <X size={14} /> : <Plus size={14} />}
-              </button>
-            </div>
-
-            {quickQuestionsVisible ? (
-              <section
-                ref={quickQuestionsRef}
-                className={`quick-questions quick-questions-bottom ${isQuickDragging ? "is-dragging" : ""}`}
-                aria-label="คำถามแนะนำ"
-                onPointerDown={handleQuickPointerDown}
-                onPointerMove={handleQuickPointerMove}
-                onPointerUp={stopQuickPointerDrag}
-                onPointerCancel={stopQuickPointerDrag}
-                onPointerLeave={stopQuickPointerDrag}
-                onWheel={handleQuickWheel}
-              >
-                {quickQuestions.slice(0, 5).map((item, index) => (
-                  <button
-                    key={`${item}-${index}`}
-                    type="button"
-                    className="ghost-button"
-                    disabled={isLoading}
-                    onClick={() => void ask(item)}
-                  >
-                    {item}
-                  </button>
-                ))}
-              </section>
-            ) : null}
+          <div className="quick-questions-control">
+            <button
+              type="button"
+              className="quick-toggle-button"
+              aria-label={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
+              title={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
+              onClick={() => setQuickQuestionsVisible((prev) => !prev)}
+            >
+              {quickQuestionsVisible ? <X size={14} /> : <Plus size={14} />}
+            </button>
           </div>
+
+          {quickQuestionsVisible ? (
+            <section
+              ref={quickQuestionsRef}
+              className={`quick-questions quick-questions-bottom ${isQuickDragging ? "is-dragging" : ""}`}
+              aria-label="คำถามแนะนำ"
+              onPointerDown={handleQuickPointerDown}
+              onPointerMove={handleQuickPointerMove}
+              onPointerUp={stopQuickPointerDrag}
+              onPointerCancel={stopQuickPointerDrag}
+              onPointerLeave={stopQuickPointerDrag}
+              onWheel={handleQuickWheel}
+            >
+              {quickQuestions.slice(0, 5).map((item, index) => (
+                <button
+                  key={`${item}-${index}`}
+                  type="button"
+                  className="ghost-button"
+                  disabled={isLoading}
+                  onClick={() => void ask(item)}
+                >
+                  {item}
+                </button>
+              ))}
+            </section>
+          ) : null}
 
           <ChatComposer value={question} disabled={isLoading} onChange={setQuestion} onSubmit={() => ask()} />
         </div>

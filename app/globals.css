@@ -778,14 +778,7 @@ body {
 .quick-questions-bottom {
   align-self: stretch;
   margin-top: 0;
-  padding: 0.1rem 0 0.2rem;
-}
-
-.quick-questions-panel {
-  border: 1px solid #eadfce;
-  border-radius: 12px;
-  background: #fffdf8;
-  padding: 0.32rem 0.42rem 0.22rem;
+  padding: 0.05rem 0 0.12rem;
 }
 
 .quick-questions-control {
@@ -793,7 +786,7 @@ body {
   align-items: center;
   justify-content: flex-end;
   gap: 0.6rem;
-  margin-top: 0;
+  margin-top: 0.04rem;
 }
 
 .quick-toggle-button {

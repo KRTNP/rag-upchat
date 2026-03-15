@@ -6,6 +6,16 @@ export const STATIC_QUICK_QUESTIONS = [
   "ถ้าต้องลงมือทำจริง ควรเริ่มจากขั้นตอนไหน"
 ]
 
+function isQuestionLike(text: string) {
+  const value = text.trim().toLowerCase()
+  if (!value) return false
+
+  if (value.includes("?") || value.includes("？")) return true
+
+  const thaiQuestionHints = ["อะไร", "อย่างไร", "ยังไง", "ไหม", "ที่ไหน", "เมื่อไหร่", "กี่", "หรือไม่", "ควร", "ต้อง"]
+  return thaiQuestionHints.some((hint) => value.includes(hint))
+}
+
 export function buildDynamicQuickQuestions(messages: ChatMessage[]) {
   const lastBot = [...messages].reverse().find((item) => item.role === "bot")
   if (lastBot?.text) {
@@ -14,7 +24,7 @@ export function buildDynamicQuickQuestions(messages: ChatMessage[]) {
       .map((line) => line.trim())
       .filter((line) => line.startsWith("- "))
       .map((line) => line.replace(/^-+\s*/, "").trim())
-      .filter(Boolean)
+      .filter((line) => Boolean(line) && isQuestionLike(line))
       .slice(0, 3)
 
     if (suggestionLines.length > 0) {

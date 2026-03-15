@@ -27,7 +27,18 @@ describe("buildDynamicQuickQuestions", () => {
     ]
 
     const questions = buildDynamicQuickQuestions(messages)
-    expect(questions).toEqual(["ขั้นตอนการลงทะเบียนแอป กยศ. Connect", "การเปิดบัญชีธนาคาร กยศ. ต้องใช้ธนาคารอะไร"])
+    expect(questions).toEqual(["การเปิดบัญชีธนาคาร กยศ. ต้องใช้ธนาคารอะไร"])
+  })
+
+  test("ignores bullet suggestions that are not question-like", () => {
+    const messages = [
+      makeMessage(
+        "bot",
+        "ตัวอย่างหัวข้อที่ใกล้เคียง:\n- ภาคต้น 20 ต.ค. 68\n- ภาคปลาย 9 มี.ค. 69\n- ภาคฤดูร้อน 2 มิ.ย. 69"
+      )
+    ]
+
+    expect(buildDynamicQuickQuestions(messages)).toEqual([])
   })
 
   test("builds follow-up suggestions from latest user message", () => {

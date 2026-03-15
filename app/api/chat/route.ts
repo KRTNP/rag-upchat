@@ -200,6 +200,7 @@ export async function POST(req: Request) {
 
   const geminiApiKey = process.env.GEMINI_API_KEY
   const zaiApiKey = process.env.ZAI_API_KEY
+  const enableOutOfScopeGuardrail = process.env.ENABLE_OUT_OF_SCOPE_GUARDRAIL === "true"
 
   if (!geminiApiKey && !zaiApiKey) {
     return Response.json({ error: "Missing GEMINI_API_KEY and ZAI_API_KEY", fallbackReason: "missing-model-keys" }, { status: 500 })
@@ -228,7 +229,7 @@ export async function POST(req: Request) {
   const docs = (primary.data ?? []) as MatchedDoc[]
 
   const maxSimilarity = Math.max(0, ...docs.map((doc) => doc.similarity ?? 0))
-  if (isOutOfScopeQuestion(userQuestion, maxSimilarity)) {
+  if (enableOutOfScopeGuardrail && isOutOfScopeQuestion(userQuestion, maxSimilarity)) {
     return Response.json({
       answer: "คำถามนี้อยู่นอกขอบเขตระบบนี้ครับ ระบบตอบได้เฉพาะเรื่อง กยศ / การกู้ยืม / ระเบียบที่เกี่ยวกับนิสิต และข้อมูลภายในที่อยู่ในฐานความรู้เท่านั้น",
       contextMatches: docs.length,
@@ -237,6 +238,10 @@ export async function POST(req: Request) {
       model: "guardrail-out-of-scope"
     })
   }
+
+  const outOfScopeRule = enableOutOfScopeGuardrail
+    ? "- ถ้าคำถามอยู่นอกขอบเขต กยศ/การกู้ยืม/งานนิสิต/ข้อมูลในคลังความรู้ ให้ตอบปฏิเสธสุภาพว่าอยู่นอกขอบเขต"
+    : ""
 
   const context = docs.map(docToText).filter(Boolean).join("\n")
   const recentHistory = safeHistory
@@ -249,7 +254,7 @@ export async function POST(req: Request) {
 
 กฎการตอบ
 - ถ้าผู้ใช้ทักทาย ให้ตอบทักทาย
-- ถ้าคำถามอยู่นอกขอบเขต กยศ/การกู้ยืม/งานนิสิต/ข้อมูลในคลังความรู้ ให้ตอบปฏิเสธสุภาพว่าอยู่นอกขอบเขต
+${outOfScopeRule}
 - ถ้าถามเกี่ยวกับ กยศ ให้ใช้ข้อมูลด้านล่างเป็นหลัก และตอบให้ตรงข้อเท็จจริงที่สุด
 - ถ้าในข้อมูลอ้างอิงมีคำตอบตรง ให้ตอบจากข้อมูลอ้างอิงก่อนเสมอ
 - ถ้าข้อมูลอ้างอิงมีหลายกรณี (เช่น หลายภาค/หลายประเภท) ให้สรุปทุกกรณีแบบเป็นรายการในคำตอบเดียว ห้ามถามกลับก่อน

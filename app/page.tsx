@@ -1,11 +1,11 @@
 "use client"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import {
   Plus, Search, Pin, PinOff, Edit2, Trash2, ArrowUp, ArrowDown,
-  Settings, LogOut, RotateCcw, Eraser, PanelLeft, PanelLeftClose
+  Settings, LogOut, RotateCcw, Eraser, PanelLeft, PanelLeftClose, X
 } from "lucide-react"
 import AppToast from "@/app/components/app-toast"
 import ChatComposer from "@/app/components/chat-composer"
@@ -72,9 +72,21 @@ export default function Page() {
 
   const [booting, setBooting] = useState(true)
   const [toast, setToast] = useState<ToastState | null>(null)
+  const [quickQuestionsVisible, setQuickQuestionsVisible] = useState(true)
+  const [isQuickDragging, setIsQuickDragging] = useState(false)
+  const quickQuestionsRef = useRef<HTMLElement | null>(null)
+  const quickDragRef = useRef({
+    active: false,
+    startX: 0,
+    scrollLeft: 0,
+    pointerId: -1
+  })
 
   const dynamicQuickQuestions = useMemo(() => buildDynamicQuickQuestions(messages), [messages])
-  const quickQuestions = useMemo(() => [...STATIC_QUICK_QUESTIONS, ...dynamicQuickQuestions], [dynamicQuickQuestions])
+  const quickQuestions = useMemo(
+    () => (dynamicQuickQuestions.length > 0 ? dynamicQuickQuestions : STATIC_QUICK_QUESTIONS),
+    [dynamicQuickQuestions]
+  )
   const filteredConversations = useMemo(() => {
     const query = sidebarQuery.trim().toLowerCase()
     if (!query) return conversations
@@ -433,6 +445,57 @@ export default function Page() {
     }, 0)
   }
 
+  function handleQuickPointerDown(event: PointerEvent<HTMLElement>) {
+    if (event.pointerType !== "mouse" || event.button !== 0) {
+      return
+    }
+
+    const container = quickQuestionsRef.current
+    if (!container) return
+
+    quickDragRef.current = {
+      active: true,
+      startX: event.clientX,
+      scrollLeft: container.scrollLeft,
+      pointerId: event.pointerId
+    }
+
+    setIsQuickDragging(false)
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  function handleQuickPointerMove(event: PointerEvent<HTMLElement>) {
+    const container = quickQuestionsRef.current
+    const state = quickDragRef.current
+    if (!container || !state.active || event.pointerId !== state.pointerId) {
+      return
+    }
+
+    const deltaX = event.clientX - state.startX
+    if (Math.abs(deltaX) > 4) {
+      setIsQuickDragging(true)
+    }
+    container.scrollLeft = state.scrollLeft - deltaX
+  }
+
+  function stopQuickPointerDrag(event: PointerEvent<HTMLElement>) {
+    const state = quickDragRef.current
+    if (event.pointerId !== state.pointerId) {
+      return
+    }
+
+    state.active = false
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    } catch {
+      // Ignore capture release errors when pointer is already released.
+    }
+
+    window.setTimeout(() => {
+      setIsQuickDragging(false)
+    }, 0)
+  }
+
   if (booting) {
     return (
       <ChatShell>
@@ -643,13 +706,48 @@ export default function Page() {
             </div>
           </div>
 
-          <section className="quick-questions quick-questions-bottom" aria-label="คำถามแนะนำ">
-            {quickQuestions.slice(0, 5).map((item, index) => (
-              <button key={`${item}-${index}`} type="button" className="ghost-button" disabled={isLoading} onClick={() => ask(item)}>
-                {item}
+          <div className="quick-questions-panel">
+            <div className="quick-questions-control">
+              <p className="quick-questions-label">พร้อมใช้งาน</p>
+              <button
+                type="button"
+                className="quick-toggle-button"
+                aria-label={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
+                title={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
+                onClick={() => setQuickQuestionsVisible((prev) => !prev)}
+              >
+                {quickQuestionsVisible ? <X size={14} /> : <Plus size={14} />}
               </button>
-            ))}
-          </section>
+            </div>
+
+            {quickQuestionsVisible ? (
+              <section
+                ref={quickQuestionsRef}
+                className={`quick-questions quick-questions-bottom ${isQuickDragging ? "is-dragging" : ""}`}
+                aria-label="คำถามแนะนำ"
+                onPointerDown={handleQuickPointerDown}
+                onPointerMove={handleQuickPointerMove}
+                onPointerUp={stopQuickPointerDrag}
+                onPointerCancel={stopQuickPointerDrag}
+                onPointerLeave={stopQuickPointerDrag}
+              >
+                {quickQuestions.slice(0, 5).map((item, index) => (
+                  <button
+                    key={`${item}-${index}`}
+                    type="button"
+                    className="ghost-button"
+                    disabled={isLoading}
+                    onClick={() => {
+                      if (isQuickDragging) return
+                      void ask(item)
+                    }}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </section>
+            ) : null}
+          </div>
 
           <ChatComposer value={question} disabled={isLoading} onChange={setQuestion} onSubmit={() => ask()} />
         </div>

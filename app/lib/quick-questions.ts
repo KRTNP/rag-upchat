@@ -25,10 +25,7 @@ export function buildDynamicQuickQuestions(messages: ChatMessage[]) {
   const lastUser = [...messages].reverse().find((item) => item.role === "user")
 
   if (!lastUser) {
-    return [
-      "มีเดดไลน์สำคัญอะไรที่ควรรู้บ้าง",
-      "สรุปหัวข้อที่ควรถามต่อให้หน่อย"
-    ]
+    return []
   }
 
   const snippet = lastUser.text.replace(/\s+/g, " ").trim().slice(0, 42)

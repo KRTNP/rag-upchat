@@ -745,10 +745,22 @@ body {
   padding-bottom: 0;
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
+  cursor: grab;
+  user-select: none;
+  min-height: 2.5rem;
+  line-height: 1.25;
 }
 
 .quick-questions::-webkit-scrollbar {
   display: none;
+}
+
+.quick-questions.is-dragging {
+  cursor: grabbing;
+}
+
+.quick-questions.is-dragging .ghost-button {
+  pointer-events: none;
 }
 
 .quick-questions .ghost-button {
@@ -769,8 +781,50 @@ body {
 
 .quick-questions-bottom {
   align-self: stretch;
-  margin-top: 0.15rem;
-  padding-bottom: 0.2rem;
+  margin-top: 0.2rem;
+  padding: 0.1rem 0 0.2rem;
+}
+
+.quick-questions-panel {
+  border: 1px solid #eadfce;
+  border-radius: 12px;
+  background: #fffdf8;
+  padding: 0.35rem 0.45rem 0.25rem;
+}
+
+.quick-questions-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 0;
+}
+
+.quick-questions-label {
+  margin: 0;
+  font-size: 0.92rem;
+  color: #5d546e;
+  font-weight: 600;
+}
+
+.quick-toggle-button {
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid #d8cbb9;
+  background: #fffdfa;
+  color: #5d4a75;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.quick-toggle-button:hover {
+  border-color: #b19363;
+  color: #3e2b5a;
+  background: #fff7e8;
 }
 
 .message-list {
@@ -1065,6 +1119,7 @@ body {
 
 .chat-send:focus-visible,
 .ghost-button:focus-visible,
+.quick-toggle-button:focus-visible,
 .auth-link-button:focus-visible,
 .dock-button:focus-visible,
 .admin-link:focus-visible,

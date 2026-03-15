@@ -321,7 +321,7 @@ export async function POST(req: Request) {
   if (docs.length === 0) {
     return Response.json({
       answer:
-        "ยังไม่พบข้อมูลที่ตรงคำถามนี้ในคลังความรู้ ลองระบุคำสำคัญเพิ่ม เช่น ประเภทผู้กู้/ภาคการศึกษา/ชื่อแบบฟอร์ม แล้วถามอีกครั้ง",
+        "ขอบคุณที่ถามนะครับ ตอนนี้ผมยังค้นไม่เจอข้อมูลที่ตรงคำถามนี้ในคลังความรู้แบบชัดเจน\nลองระบุเพิ่มอีกนิดได้ไหม เช่น ประเภทผู้กู้ (รายใหม่/รายเก่า), ภาคเรียน, หรือชื่อแบบฟอร์มที่เกี่ยวข้อง แล้วผมจะช่วยไล่ให้ตรงจุดทันที",
       contextMatches: 0,
       fallbackUsed: true,
       fallbackReason: "no-context-match",
@@ -359,11 +359,11 @@ export async function POST(req: Request) {
       .map((doc) => extractQuestionFromContent(doc.content))
       .filter(Boolean)
     const suggestionText = suggestions.length
-      ? `\nตัวอย่างหัวข้อที่ใกล้เคียง:\n- ${suggestions.join("\n- ")}`
+      ? `\nหัวข้อที่ใกล้เคียงที่ผมเจอ:\n- ${suggestions.join("\n- ")}`
       : ""
 
     return Response.json({
-      answer: `ยังไม่เจอข้อมูลที่มั่นใจว่า “ตรงคำถามนี้” พอครับ ลองระบุให้ชัดขึ้น เช่น ภาคเรียน/ประเภทผู้กู้/ชื่อแบบฟอร์ม${suggestionText}`,
+      answer: `ผมเจอข้อมูลใกล้เคียง แต่ยังไม่มั่นใจพอว่าจะตรงคำถามนี้แบบ 100% ครับ\nช่วยระบุเพิ่มอีกนิด เช่น ภาคเรียน/ประเภทผู้กู้/ชื่อแบบฟอร์ม แล้วผมจะตอบให้ตรงที่สุด${suggestionText}`,
       contextMatches: docs.length,
       fallbackUsed: true,
       fallbackReason: "low-confidence-context",
@@ -389,7 +389,8 @@ export async function POST(req: Request) {
   const maxSimilarity = Math.max(0, ...docs.map((doc) => doc.similarity ?? 0))
   if (enableOutOfScopeGuardrail && isOutOfScopeQuestion(userQuestion, maxSimilarity)) {
     return Response.json({
-      answer: "คำถามนี้อยู่นอกขอบเขตระบบนี้ครับ ระบบตอบได้เฉพาะเรื่อง กยศ / การกู้ยืม / ระเบียบที่เกี่ยวกับนิสิต และข้อมูลภายในที่อยู่ในฐานความรู้เท่านั้น",
+      answer:
+        "ขอโทษด้วยครับ คำถามนี้อยู่นอกขอบเขตที่ระบบนี้ดูแลอยู่\nผมช่วยได้ดีที่สุดในเรื่อง กยศ / การกู้ยืม / ระเบียบนิสิต / ข้อมูลภายในมหาวิทยาลัย ถ้าต้องการ ผมช่วยแตกคำถามใหม่ให้อยู่ในขอบเขตนี้ได้",
       contextMatches: docs.length,
       fallbackUsed: true,
       fallbackReason: "out-of-scope",
@@ -413,6 +414,9 @@ export async function POST(req: Request) {
 กฎการตอบ
 - ถ้าผู้ใช้ทักทาย ให้ตอบทักทาย
 ${outOfScopeRule}
+- โทนการตอบต้องเป็นมิตร สุภาพ และช่วยผู้ใช้ไปต่อได้เสมอ
+- หลีกเลี่ยงประโยคปัดสั้นๆ เช่น "ไม่มีข้อมูลที่ match ได้เลย"
+- ถ้าข้อมูลไม่พอ ให้บอกว่าขาดอะไร และยกตัวอย่างสิ่งที่ผู้ใช้ควรระบุเพิ่ม
 - ถ้าถามเกี่ยวกับ กยศ ให้ใช้ข้อมูลด้านล่างเป็นหลัก และตอบให้ตรงข้อเท็จจริงที่สุด
 - ถ้าในข้อมูลอ้างอิงมีคำตอบตรง ให้ตอบจากข้อมูลอ้างอิงก่อนเสมอ และห้ามแต่งข้อมูลเพิ่ม
 - ถ้ามีคำตอบอยู่ในข้อมูลอ้างอิง ให้ตอบเฉพาะเนื้อคำตอบสั้นๆ โดยไม่ต้องทักทาย/ไม่ต้องเกริ่น

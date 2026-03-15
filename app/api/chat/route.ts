@@ -156,6 +156,15 @@ function makeDirectAnswerNatural(question: string, answer: string) {
   return clean
 }
 
+function enforceMaleTone(text: string) {
+  if (!text) return text
+  return text
+    .replace(/นะค่ะ/g, "นะครับ")
+    .replace(/นะคะ/g, "นะครับ")
+    .replace(/ค่ะ/g, "ครับ")
+    .replace(/คะ(?=[\s!?.,]|$)/g, "ครับ")
+}
+
 function extractQuestionFromContent(content: string | undefined) {
   if (!content) return ""
   const q = content.split("คำตอบ:")[0] ?? ""
@@ -381,7 +390,7 @@ export async function POST(req: Request) {
     }
   }
 
-  if (docs.length === 0) {
+  if (docs.length === 0 && answerMode === "strict") {
     return Response.json({
       answer:
         "ผมหาข้อมูลที่ตรงเป๊ะในคลังความรู้ยังไม่เจอครับ แต่ช่วยต่อได้แน่นอน\nลองพิมพ์เพิ่มอีกนิดแบบนี้ได้เลย: ประเภทผู้กู้ (รายใหม่/รายเก่า), ภาคเรียน, หรือชื่อแบบฟอร์ม แล้วผมจะสรุปให้ตรงประเด็นทันที",
@@ -409,6 +418,7 @@ export async function POST(req: Request) {
   const topQuestionText = extractQuestionFromContent(topDoc?.content)
   const lexicalScore = lexicalOverlapScore(userQuestion, topQuestionText)
   const similarityGap = (topDoc?.similarity ?? 0) - (secondDoc?.similarity ?? 0)
+  const softOutOfScopeSimilarity = Number(process.env.RAG_SOFT_OUT_OF_SCOPE_SIMILARITY ?? 0.56)
   const canLockAnswer = Boolean(
     directAnswer &&
       topSimilarity >= lockedAnswerThreshold &&
@@ -470,7 +480,26 @@ export async function POST(req: Request) {
   }
 
   const maxSimilarity = Math.max(0, ...docs.map((doc) => doc.similarity ?? 0))
-  if (enableOutOfScopeGuardrail && isOutOfScopeQuestion(userQuestion, maxSimilarity)) {
+  if (answerMode !== "strict" && maxSimilarity < softOutOfScopeSimilarity) {
+    const suggestions = sortedDocs
+      .slice(0, 3)
+      .map((doc) => extractQuestionFromContent(doc.content))
+      .filter(Boolean)
+    const suggestionsText = suggestions.length
+      ? `\nลองถามแนวนี้ได้ เช่น:\n- ${suggestions.join("\n- ")}`
+      : ""
+
+    return Response.json({
+      answer: `คำถามนี้อาจยังไม่อยู่ในขอบเขตข้อมูลที่ผมมีตอนนี้ครับ\nผมตอบได้แม่นที่สุดในเรื่อง กยศ / การกู้ยืม / ระเบียบนิสิต / ปฏิทินการศึกษา${suggestionsText}\nอยากให้ผมช่วยแปลงคำถามให้ตรงกับฐานข้อมูลที่มีไหมครับ?`,
+      contextMatches: docs.length,
+      fallbackUsed: true,
+      fallbackReason: "soft-out-of-scope",
+      model: "context-fallback",
+      cacheHit: false
+    })
+  }
+
+  if (answerMode === "strict" && enableOutOfScopeGuardrail && isOutOfScopeQuestion(userQuestion, maxSimilarity)) {
     return Response.json({
       answer:
         "คำถามนี้อาจเลยขอบเขตที่ระบบนี้ดูแลอยู่ครับ แต่ผมยังช่วยปรับคำถามให้ใกล้กับข้อมูลที่มีได้\nระบบนี้ถนัดเรื่อง กยศ / การกู้ยืม / ระเบียบนิสิต / ข้อมูลภายในมหาวิทยาลัย",
@@ -498,6 +527,7 @@ export async function POST(req: Request) {
 - ถ้าผู้ใช้ทักทาย ให้ตอบทักทาย
 ${outOfScopeRule}
 - โทนการตอบต้องเป็นมิตร สุภาพ และช่วยผู้ใช้ไปต่อได้เสมอ
+- ใช้สรรพนามผู้ช่วยเพศชาย และลงท้ายด้วย "ครับ" อย่างสม่ำเสมอ
 - หลีกเลี่ยงประโยคปัดสั้นๆ เช่น "ไม่มีข้อมูลที่ match ได้เลย"
 - ถ้าข้อมูลไม่พอ ให้บอกว่าขาดอะไร และยกตัวอย่างสิ่งที่ผู้ใช้ควรระบุเพิ่ม
 - ถ้าไม่มั่นใจ ให้เริ่มจากสิ่งที่ "น่าจะใช่ที่สุด" แบบระบุว่าเป็นข้อมูลเบื้องต้น แล้วค่อยชวนผู้ใช้ระบุเพิ่มเพื่อยืนยัน
@@ -530,7 +560,8 @@ ${userQuestion}
     for (const model of geminiModels) {
       try {
         const answer = await withTimeout(generateWithModel(geminiApiKey, model, prompt), geminiTimeoutMs, `gemini/${model}`)
-        const finalAnswer = answerMode === "strict" && canLockAnswer ? makeDirectAnswerNatural(userQuestion, directAnswer) : answer
+        const finalAnswerRaw = answerMode === "strict" && canLockAnswer ? makeDirectAnswerNatural(userQuestion, directAnswer) : answer
+        const finalAnswer = enforceMaleTone(finalAnswerRaw)
         const payload: ChatApiSuccessPayload = {
           answer: finalAnswer,
           contextMatches: docs.length,
@@ -558,7 +589,8 @@ ${userQuestion}
     try {
       // Give z.ai full timeout budget from config, independent of Gemini elapsed time.
       const answer = await generateWithZai(zaiApiKey, "glm-4.7-flash", prompt)
-      const finalAnswer = answerMode === "strict" && canLockAnswer ? makeDirectAnswerNatural(userQuestion, directAnswer) : answer
+      const finalAnswerRaw = answerMode === "strict" && canLockAnswer ? makeDirectAnswerNatural(userQuestion, directAnswer) : answer
+      const finalAnswer = enforceMaleTone(finalAnswerRaw)
       const fallbackReason = shouldUseZaiPrimary ? "zai-primary" : "gemini-failed"
       const payload: ChatApiSuccessPayload = {
         answer: finalAnswer,

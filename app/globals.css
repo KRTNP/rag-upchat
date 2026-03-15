@@ -776,17 +776,26 @@ body {
 }
 
 .quick-questions-bottom {
-  align-self: stretch;
+  align-self: auto;
   margin-top: 0;
-  padding: 0.05rem 0 0.12rem;
+  padding: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.quick-questions-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  margin-top: 0.04rem;
 }
 
 .quick-questions-control {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 0.6rem;
-  margin-top: 0.04rem;
+  flex: 0 0 auto;
 }
 
 .quick-toggle-button {

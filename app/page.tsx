@@ -470,6 +470,11 @@ export default function Page() {
       return
     }
 
+    const target = event.target as HTMLElement | null
+    if (target?.closest("button")) {
+      return
+    }
+
     const container = quickQuestionsRef.current
     if (!container) return
 
@@ -744,43 +749,45 @@ export default function Page() {
             </div>
           </div>
 
-          <div className="quick-questions-control">
-            <button
-              type="button"
-              className="quick-toggle-button"
-              aria-label={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
-              title={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
-              onClick={() => setQuickQuestionsVisible((prev) => !prev)}
-            >
-              {quickQuestionsVisible ? <X size={14} /> : <Plus size={14} />}
-            </button>
-          </div>
+          <div className="quick-questions-row">
+            {quickQuestionsVisible ? (
+              <section
+                ref={quickQuestionsRef}
+                className={`quick-questions quick-questions-bottom ${isQuickDragging ? "is-dragging" : ""}`}
+                aria-label="คำถามแนะนำ"
+                onPointerDown={handleQuickPointerDown}
+                onPointerMove={handleQuickPointerMove}
+                onPointerUp={stopQuickPointerDrag}
+                onPointerCancel={stopQuickPointerDrag}
+                onPointerLeave={stopQuickPointerDrag}
+                onWheel={handleQuickWheel}
+              >
+                {quickQuestions.slice(0, 5).map((item, index) => (
+                  <button
+                    key={`${item}-${index}`}
+                    type="button"
+                    className="ghost-button"
+                    disabled={isLoading}
+                    onClick={() => void ask(item)}
+                  >
+                    {item}
+                  </button>
+                ))}
+              </section>
+            ) : null}
 
-          {quickQuestionsVisible ? (
-            <section
-              ref={quickQuestionsRef}
-              className={`quick-questions quick-questions-bottom ${isQuickDragging ? "is-dragging" : ""}`}
-              aria-label="คำถามแนะนำ"
-              onPointerDown={handleQuickPointerDown}
-              onPointerMove={handleQuickPointerMove}
-              onPointerUp={stopQuickPointerDrag}
-              onPointerCancel={stopQuickPointerDrag}
-              onPointerLeave={stopQuickPointerDrag}
-              onWheel={handleQuickWheel}
-            >
-              {quickQuestions.slice(0, 5).map((item, index) => (
-                <button
-                  key={`${item}-${index}`}
-                  type="button"
-                  className="ghost-button"
-                  disabled={isLoading}
-                  onClick={() => void ask(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </section>
-          ) : null}
+            <div className="quick-questions-control">
+              <button
+                type="button"
+                className="quick-toggle-button"
+                aria-label={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
+                title={quickQuestionsVisible ? "ซ่อนคำถามแนะนำ" : "แสดงคำถามแนะนำ"}
+                onClick={() => setQuickQuestionsVisible((prev) => !prev)}
+              >
+                {quickQuestionsVisible ? <X size={14} /> : <Plus size={14} />}
+              </button>
+            </div>
+          </div>
 
           <ChatComposer value={question} disabled={isLoading} onChange={setQuestion} onSubmit={() => ask()} />
         </div>

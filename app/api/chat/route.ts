@@ -1,30 +1,30 @@
-import { GoogleGenerativeAI } from "@google/generative-ai"
-import { createClient } from "@supabase/supabase-js"
+﻿import { GoogleGenerativeAI } from "@google/generative-ai"
+import { getSupabaseClient } from "@/app/lib/supabase"
+import { getEmbedding } from "@/app/lib/embedding"
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+type MatchedDoc = {
+  question: string
+  answer: string
+}
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-)
-
-export async function POST(req) {
-
+export async function POST(req: Request) {
   const { question } = await req.json()
 
-  // 1️⃣ embed question
-  const embedRes = await fetch("http://localhost:3000/api/embed", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({ text: question })
-  })
+  if (!process.env.GEMINI_API_KEY) {
+    return Response.json({ error: "Missing GEMINI_API_KEY" }, { status: 500 })
+  }
 
-  const embedding = await embedRes.json()
+  let supabase
+  try {
+    supabase = getSupabaseClient()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error"
+    return Response.json({ error: message }, { status: 500 })
+  }
 
-  // 2️⃣ vector search ตรงจาก Supabase
-  const { data: docs, error } = await supabase.rpc("match_documents", {
+  const embedding = await getEmbedding(question)
+
+  const { data, error } = await supabase.rpc("match_documents", {
     query_embedding: embedding,
     match_threshold: 0.7,
     match_count: 3
@@ -34,20 +34,10 @@ export async function POST(req) {
     console.error("search error:", error)
   }
 
-  console.log("docs:", docs)
+  const docs = (data ?? []) as MatchedDoc[]
+  const context = docs.map(d => `${d.question} ${d.answer}`).join("\n")
 
-  // 3️⃣ build context
-  let context = ""
-
-  if (docs && docs.length > 0) {
-    context = docs
-      .map(d => `${d.question} ${d.answer}`)
-      .join("\n")
-  }
-
-  console.log("context:", context)
-
-  // 4️⃣ call Gemini
+  const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
   const model = genAI.getGenerativeModel({
     model: "gemini-2.5-flash"
   })
@@ -70,7 +60,6 @@ ${question}
 `
 
   const result = await model.generateContent(prompt)
-
   const answer = result.response.text()
 
   return Response.json({ answer })

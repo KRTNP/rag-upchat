@@ -53,7 +53,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
 
 async function generateWithModel(apiKey: string, modelName: string, prompt: string) {
   const genAI = new GoogleGenerativeAI(apiKey)
-  const model = genAI.getGenerativeModel({ model: modelName })
+  const model = genAI.getGenerativeModel({ model: modelName, generationConfig: { temperature: 0.2 } })
   const result = await model.generateContent(prompt)
   return result.response.text()
 }
@@ -73,7 +73,7 @@ async function generateWithZai(apiKey: string, modelName: string, prompt: string
     body: JSON.stringify({
       model: modelName,
       stream: false,
-      temperature: 0.7,
+      temperature: 0.2,
       messages: [{ role: "user", content: prompt }]
     }),
     signal: controller.signal
@@ -143,6 +143,14 @@ function shouldCooldownZai(error: unknown) {
   return message.includes("timeout") || message.includes("429") || message.includes("rate limit") || message.includes("unavailable")
 }
 
+function extractAnswerFromContent(content: string | undefined) {
+  if (!content) return ""
+  const marker = "คำตอบ:"
+  const idx = content.indexOf(marker)
+  if (idx === -1) return ""
+  return content.slice(idx + marker.length).trim()
+}
+
 function parseGeminiModelChain() {
   const raw = process.env.GEMINI_MODEL_CHAIN?.trim()
   if (!raw) {
@@ -180,13 +188,16 @@ export async function POST(req: Request) {
   const clientIp = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown"
   const rateLimitMax = Number(process.env.SERVER_RATE_LIMIT_MAX ?? 20)
   const rateLimitWindowMs = Number(process.env.SERVER_RATE_LIMIT_WINDOW_MS ?? 60_000)
-  const limiter = await checkRateLimit(`chat:${clientIp}`, rateLimitMax, rateLimitWindowMs)
+  const enableServerRateLimit = process.env.ENABLE_SERVER_RATE_LIMIT === "true"
 
-  if (!limiter.allowed) {
-    return Response.json(
-      { error: "Too many requests", fallbackReason: "server-rate-limit", retryAfterSec: limiter.retryAfterSec },
-      { status: 429, headers: { "Retry-After": String(limiter.retryAfterSec) } }
-    )
+  if (enableServerRateLimit) {
+    const limiter = await checkRateLimit(`chat:${clientIp}`, rateLimitMax, rateLimitWindowMs)
+    if (!limiter.allowed) {
+      return Response.json(
+        { error: "Too many requests", fallbackReason: "server-rate-limit", retryAfterSec: limiter.retryAfterSec },
+        { status: 429, headers: { "Retry-After": String(limiter.retryAfterSec) } }
+      )
+    }
   }
 
   const prohibitedKeywords = parseProhibitedKeywords(process.env.PROHIBITED_KEYWORDS)
@@ -218,7 +229,7 @@ export async function POST(req: Request) {
 
   const primary = await supabase.rpc("match_documents", {
     query_embedding: embedding,
-    match_threshold: 0.6,
+    match_threshold: 0.68,
     match_count: 3
   })
 
@@ -227,6 +238,24 @@ export async function POST(req: Request) {
   }
 
   const docs = (primary.data ?? []) as MatchedDoc[]
+  const topDoc = [...docs].sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0))[0]
+  const topSimilarity = topDoc?.similarity ?? 0
+  const directAnswerThreshold = Number(process.env.RAG_DIRECT_ANSWER_SIMILARITY ?? 0.86)
+  const directAnswer = extractAnswerFromContent(topDoc?.content)
+
+  if (topDoc && topSimilarity >= directAnswerThreshold && directAnswer) {
+    const payload: ChatApiSuccessPayload = {
+      answer: directAnswer,
+      contextMatches: docs.length,
+      fallbackUsed: false,
+      fallbackReason: "direct-rag-answer",
+      model: "retrieval-direct"
+    }
+    if (cacheEnabled) {
+      chatResponseCache.set(cacheKey, payload, cacheTtlMs)
+    }
+    return Response.json({ ...payload, cacheHit: false })
+  }
 
   const maxSimilarity = Math.max(0, ...docs.map((doc) => doc.similarity ?? 0))
   if (enableOutOfScopeGuardrail && isOutOfScopeQuestion(userQuestion, maxSimilarity)) {
@@ -256,7 +285,7 @@ export async function POST(req: Request) {
 - ถ้าผู้ใช้ทักทาย ให้ตอบทักทาย
 ${outOfScopeRule}
 - ถ้าถามเกี่ยวกับ กยศ ให้ใช้ข้อมูลด้านล่างเป็นหลัก และตอบให้ตรงข้อเท็จจริงที่สุด
-- ถ้าในข้อมูลอ้างอิงมีคำตอบตรง ให้ตอบจากข้อมูลอ้างอิงก่อนเสมอ
+- ถ้าในข้อมูลอ้างอิงมีคำตอบตรง ให้ตอบจากข้อมูลอ้างอิงก่อนเสมอ และห้ามแต่งข้อมูลเพิ่ม
 - ถ้าข้อมูลอ้างอิงมีหลายกรณี (เช่น หลายภาค/หลายประเภท) ให้สรุปทุกกรณีแบบเป็นรายการในคำตอบเดียว ห้ามถามกลับก่อน
 
 ข้อมูลอ้างอิง:

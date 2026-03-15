@@ -4,6 +4,7 @@ import { docToText } from "@/app/lib/document-text"
 import { getEmbedding } from "@/app/lib/embedding"
 import { checkProhibitedKeyword, isOutOfScopeQuestion, parseProhibitedKeywords } from "@/app/lib/guardrails"
 import { ResponseCache } from "@/app/lib/response-cache"
+import { getCooldownRemainingSec, setCooldownSec } from "@/app/lib/shared-runtime-state"
 import { checkRateLimit } from "@/app/lib/server-rate-limit"
 import { getSupabaseClient } from "@/app/lib/supabase"
 
@@ -29,8 +30,6 @@ type ChatApiSuccessPayload = {
 }
 
 const chatResponseCache = new ResponseCache<ChatApiSuccessPayload>()
-let geminiBlockedUntilMs = 0
-let zaiBlockedUntilMs = 0
 
 function buildCacheKey(question: string, history: ChatTurn[]) {
   const compactHistory = history.slice(-4).map((turn) => `${turn.role}:${turn.text}`).join("|")
@@ -144,6 +143,20 @@ function shouldCooldownZai(error: unknown) {
   return message.includes("timeout") || message.includes("429") || message.includes("rate limit") || message.includes("unavailable")
 }
 
+function parseGeminiModelChain() {
+  const raw = process.env.GEMINI_MODEL_CHAIN?.trim()
+  if (!raw) {
+    return ["gemini-2.5-flash", "gemma-3-27b-it"] as const
+  }
+
+  const chain = raw
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean)
+
+  return (chain.length ? chain : ["gemini-2.5-flash", "gemma-3-27b-it"]) as readonly string[]
+}
+
 export async function POST(req: Request) {
   const { question, history } = (await req.json()) as { question?: string; history?: ChatTurn[] }
   const userQuestion = (question ?? "").trim()
@@ -167,7 +180,7 @@ export async function POST(req: Request) {
   const clientIp = req.headers.get("x-real-ip") ?? req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown"
   const rateLimitMax = Number(process.env.SERVER_RATE_LIMIT_MAX ?? 20)
   const rateLimitWindowMs = Number(process.env.SERVER_RATE_LIMIT_WINDOW_MS ?? 60_000)
-  const limiter = checkRateLimit(`chat:${clientIp}`, rateLimitMax, rateLimitWindowMs)
+  const limiter = await checkRateLimit(`chat:${clientIp}`, rateLimitMax, rateLimitWindowMs)
 
   if (!limiter.allowed) {
     return Response.json(
@@ -260,13 +273,13 @@ ${userQuestion}
   const geminiTimeoutMs = Number(process.env.MODEL_TIMEOUT_MS ?? 6000)
 
   if (geminiApiKey) {
-    const now = Date.now()
-    if (now < geminiBlockedUntilMs) {
+    const geminiCooldownSec = await getCooldownRemainingSec("cooldown:gemini")
+    if (geminiCooldownSec > 0) {
       geminiFailed = true
       geminiSawRateLimit = true
-      errors.push(new Error(`gemini cooldown active for ${Math.ceil((geminiBlockedUntilMs - now) / 1000)}s`))
+      errors.push(new Error(`gemini cooldown active for ${geminiCooldownSec}s`))
     } else {
-      const geminiModels = ["gemini-2.5-flash"] as const
+      const geminiModels = parseGeminiModelChain()
 
       for (const model of geminiModels) {
         try {
@@ -283,7 +296,7 @@ ${userQuestion}
           if (rateLimited) {
             const retryAfterSec = parseRetryAfterSeconds(err) ?? 30
             geminiRetryAfterSec = retryAfterSec
-            geminiBlockedUntilMs = Date.now() + retryAfterSec * 1000
+            await setCooldownSec("cooldown:gemini", retryAfterSec)
           }
           errors.push(err)
           console.error(`model attempt failed: gemini/${model}`, err)
@@ -297,9 +310,9 @@ ${userQuestion}
   const shouldUseZaiPrimary = Boolean(zaiApiKey && !geminiApiKey)
 
   if ((shouldUseZaiFallback || shouldUseZaiPrimary) && zaiApiKey) {
-    const now = Date.now()
-    if (now < zaiBlockedUntilMs) {
-      errors.push(new Error(`zai cooldown active for ${Math.ceil((zaiBlockedUntilMs - now) / 1000)}s`))
+    const zaiCooldownSec = await getCooldownRemainingSec("cooldown:zai")
+    if (zaiCooldownSec > 0) {
+      errors.push(new Error(`zai cooldown active for ${zaiCooldownSec}s`))
     } else {
       try {
         // Give z.ai full timeout budget from config, independent of Gemini elapsed time.
@@ -319,7 +332,7 @@ ${userQuestion}
       } catch (err) {
         if (shouldCooldownZai(err)) {
           const cooldownSec = parseRetryAfterSeconds(err) ?? 45
-          zaiBlockedUntilMs = Date.now() + Math.max(5, cooldownSec) * 1000
+          await setCooldownSec("cooldown:zai", Math.max(5, cooldownSec))
         }
         errors.push(err)
         console.error("model attempt failed: zai/glm-4.7-flash", err)

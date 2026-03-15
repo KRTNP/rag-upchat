@@ -1,24 +1,16 @@
-type RateLimitRecord = {
-  count: number
-  resetAt: number
-}
+import { incrementWithinWindow } from "@/app/lib/shared-runtime-state"
 
-const store = new Map<string, RateLimitRecord>()
+export async function checkRateLimit(key: string, limit: number, windowMs: number) {
+  const windowSec = Math.max(Math.ceil(windowMs / 1000), 1)
+  const result = await incrementWithinWindow(key, windowSec)
 
-export function checkRateLimit(key: string, limit: number, windowMs: number) {
-  const now = Date.now()
-  const current = store.get(key)
-
-  if (!current || current.resetAt <= now) {
-    store.set(key, { count: 1, resetAt: now + windowMs })
-    return { allowed: true, remaining: Math.max(limit - 1, 0), retryAfterSec: Math.ceil(windowMs / 1000) }
+  if (result.count > limit) {
+    return { allowed: false, remaining: 0, retryAfterSec: Math.max(result.ttlSec, 1) }
   }
 
-  if (current.count >= limit) {
-    return { allowed: false, remaining: 0, retryAfterSec: Math.max(Math.ceil((current.resetAt - now) / 1000), 1) }
+  return {
+    allowed: true,
+    remaining: Math.max(limit - result.count, 0),
+    retryAfterSec: Math.max(result.ttlSec, 1)
   }
-
-  current.count += 1
-  store.set(key, current)
-  return { allowed: true, remaining: Math.max(limit - current.count, 0), retryAfterSec: Math.max(Math.ceil((current.resetAt - now) / 1000), 1) }
 }

@@ -25,9 +25,24 @@ describe("assertAdminRequest", () => {
     await expect(assertAdminRequest(req)).resolves.toBe(false)
   })
 
-  test("returns true for authenticated user", async () => {
+  test("returns false for authenticated user when ADMIN_ALLOWED_EMAILS is empty", async () => {
     vi.stubEnv("SUPABASE_URL", "https://example.supabase.co")
     vi.stubEnv("SUPABASE_ANON_KEY", "anon-key")
+    getUserMock.mockResolvedValue({ data: { user: { email: "admin@example.com" } }, error: null })
+
+    const req = new Request("http://localhost", {
+      headers: {
+        authorization: "Bearer token-1"
+      }
+    })
+
+    await expect(assertAdminRequest(req)).resolves.toBe(false)
+  })
+
+  test("returns true when authenticated user email is in ADMIN_ALLOWED_EMAILS", async () => {
+    vi.stubEnv("SUPABASE_URL", "https://example.supabase.co")
+    vi.stubEnv("SUPABASE_ANON_KEY", "anon-key")
+    vi.stubEnv("ADMIN_ALLOWED_EMAILS", "admin@example.com")
     getUserMock.mockResolvedValue({ data: { user: { email: "admin@example.com" } }, error: null })
 
     const req = new Request("http://localhost", {

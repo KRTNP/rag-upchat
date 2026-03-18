@@ -38,8 +38,9 @@ export async function assertAdminRequest(req: Request) {
       .map((item) => item.trim().toLowerCase())
       .filter(Boolean)
 
+    // Fail closed: admin access is denied unless an explicit allowlist is configured.
     if (allowedEmails.length === 0) {
-      return true
+      return false
     }
 
     return allowedEmails.includes((data.user.email ?? "").toLowerCase())

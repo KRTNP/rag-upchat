@@ -48,7 +48,6 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 CF_ACCOUNT_ID=...
 CF_API_TOKEN=...
-ADMIN_ALLOWED_EMAILS=...
 ```
 
 ## 3) เตรียมฐานข้อมูล Supabase
@@ -58,6 +57,7 @@ ADMIN_ALLOWED_EMAILS=...
 ```sql
 -- copy เนื้อหาจากไฟล์:
 -- supabase/migrations/20260315_unify_documents_content_and_rag.sql
+-- supabase/migrations/20260318_add_user_roles.sql
 ```
 
 รัน SQL นี้ใน Supabase SQL Editor:
@@ -153,14 +153,22 @@ npm run dev
 
 - เปิด `http://localhost:3000/admin`
 - เข้าระบบด้วย Supabase Auth (email/password)
-- สามารถจำกัดอีเมลผู้ดูแลผ่าน `ADMIN_ALLOWED_EMAILS` (คั่นด้วย comma)
+- ระบบใช้ RBAC ผ่านตาราง `user_roles` (role ที่อนุญาตเข้า admin: `admin`, `super_admin`)
 - หน้า Admin รองรับ:
   - ค้นหา/เพิ่ม/แก้ไข/ลบ เอกสารในตาราง `documents`
   - Re-embed รายเอกสาร หรือ Re-embed ทั้งระบบ
   - นำเข้า CSV (`question,answer`) และสั่ง embed ทันทีได้
   - Dashboard metrics (total/embedded/pending/latest id)
 
-> แนะนำให้ตั้ง `SUPABASE_SERVICE_ROLE_KEY` สำหรับสิทธิ์เขียนข้อมูลในระบบ Admin/API ฝั่งเซิร์ฟเวอร์
+ต้องตั้งค่า:
+- `SUPABASE_SERVICE_ROLE_KEY` (จำเป็น)
+- เพิ่ม role ให้ผู้ดูแลอย่างน้อย 1 คน:
+
+```sql
+insert into public.user_roles (user_id, role)
+values ('<SUPABASE_USER_UUID>', 'super_admin')
+on conflict (user_id) do update set role = excluded.role;
+```
 
 ## 8) รันทดสอบ
 

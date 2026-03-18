@@ -1,4 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
+import { getSupabaseAdminClient } from "@/app/lib/supabase-admin"
+
+const ADMIN_ROLES = new Set(["admin", "super_admin"])
 
 function getAdminAuthClient() {
   const url = process.env.SUPABASE_URL
@@ -32,18 +35,18 @@ export async function assertAdminRequest(req: Request) {
       return false
     }
 
-    const allowedRaw = process.env.ADMIN_ALLOWED_EMAILS ?? ""
-    const allowedEmails = allowedRaw
-      .split(",")
-      .map((item) => item.trim().toLowerCase())
-      .filter(Boolean)
+    const roleClient = getSupabaseAdminClient()
+    const roleResult = await roleClient
+      .from("user_roles")
+      .select("role")
+      .eq("user_id", data.user.id)
+      .maybeSingle<{ role: string }>()
 
-    // Fail closed: admin access is denied unless an explicit allowlist is configured.
-    if (allowedEmails.length === 0) {
-      return false
+    if (!roleResult.error && roleResult.data?.role && ADMIN_ROLES.has(roleResult.data.role)) {
+      return true
     }
 
-    return allowedEmails.includes((data.user.email ?? "").toLowerCase())
+    return false
   } catch {
     return false
   }
